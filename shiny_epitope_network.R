@@ -1,11 +1,15 @@
 ###
-# Interactive network visualization of epitope pairwise sequence similarity, 
-# z-score correlation, and cooccurrence
+# Interactive network visualization of viral peptides in PhIP-Seq libraries
+# show peptides' pairwise sequence similarity, correlation, and cooccurrence
 #
 # This is a R shiny app. To launch the app, click "Run App". 
 #
-# Siyang Xia (collaborate with Jenn L. Remmel)
-# 2021-09-15
+# Contributor:
+# Siyang Xia
+# Daniel Monaco
+# H. Benjamin Larman
+#
+# Version: 2021-12-01
 ###
 
 
@@ -211,9 +215,9 @@ ui <- fluidPage(
   # shinythemes::themeSelector(),
   
   # title              
-  titlePanel(h3("VirScan epitope network visualization", 
-                h5("Created by: Siyang Xia")),
-             windowTitle = "VirScan epitope network visualization tool"
+  titlePanel(h3("VirScan peptide network visualization", 
+                h5("Developer: Siyang Xia, Daniel Monaco, H. Benjamin Larman")),
+             windowTitle = "VirScan peptide network visualization tool"
   ),
   
   # sidebar with a slider input for number of bins 
@@ -262,7 +266,7 @@ ui <- fluidPage(
                    label = "Seed", 
                    min = 1, 
                    max = 1000, 
-                   value = 419, 
+                   value = 111, 
                    step = 1),
       
       br(),
@@ -625,7 +629,7 @@ server <- function(input, output, session) {
   
   # number of epitopes selected
   output$n_node <- renderText({
-    paste("Number of epitopes:", sum(is.na(network_dt()$string_compare)))
+    paste("Number of peptides:", sum(is.na(network_dt()$string_compare)))
   })
   
   
