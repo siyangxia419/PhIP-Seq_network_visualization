@@ -25,6 +25,16 @@ load_lib <- c("shiny", "shinythemes", "tidyverse", "cowplot", "here",
 install_lib <- load_lib[!load_lib %in% installed.packages()]
 for(lib in install_lib) install.packages(lib, dependencies=TRUE)
 
+# install virlink (a customized package for pairwise peptide analysis)
+if(!("devtools" %in% installed.packages())) install.packages("devtools")
+if(!("virlink" %in% installed.packages())){
+  devtools::install_github(repo = "siyangxia419/virlink", 
+                           ref = "main",
+                           upgrade = "never",
+                           auth_token = "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")
+}
+load_lib <- c(load_lib, "virlink")
+
 # load all packages
 for(lib in load_lib) library(lib, character.only = TRUE)
 rm(install_lib, lib)
@@ -55,9 +65,8 @@ epitope_network_visualization <- function(net_df,
                                           edge_var = "sim_score",
                                           edge_title = "similarity score",
                                           edge_presentation = "color", 
-                                          vertex_size_var = "freq_max",
-                                          vertex_size_title = "max enrichment frequency",
-                                          fig_title = "epitope network",
+                                          vertex_size_var = "freq",
+                                          fig_title = "peptide network",
                                           interactive_plot = TRUE){
   
   # check if any edge should be plotted
@@ -74,6 +83,7 @@ epitope_network_visualization <- function(net_df,
   
   # prepare for plotly
   if(interactive_plot){
+    
     # add the peptide id of the end point
     net_df <- net_df %>% 
       dplyr::right_join({net_df %>% 
@@ -90,22 +100,24 @@ epitope_network_visualization <- function(net_df,
                                 yes = NA, 
                                 no = (y + yend) / 2),
                     text = ifelse(test = is.na(string_compare),
-                                  yes = paste(name, 
-                                              organism, 
-                                              pep_aa,
-                                              paste0("enrichment frequency: ", round(freq_max, 3)),
-                                              sep = "<br>"), 
-                                  no = paste(paste0("epitope 1: ", name),
-                                             paste0("organism: ", subject_organism),
-                                             paste0("epitope 2: ", nameend),
-                                             paste0("organism: ", pattern_organism),
-                                             paste0("alignment: ", string_compare), 
-                                             paste0("sequence similarity: ", round(sim_score, 3)),
-                                             paste0("z-score correlation (no temporal): ", round(cor, 3)),
-                                             paste0("z-score correlation (temporal): ", round(cor_ts, 3)),
-                                             paste0("co-occurrence phi coefficient: ", round(phi, 3)),
-                                             paste0("co-occurrence proportion: ", round(mean_prop, 3)),
-                                             sep = "<br>")))
+                                  yes  = paste(paste0("peptide id: ", name), 
+                                               paste0("family    : ", family),
+                                               paste0("genus     : ", genus),
+                                               paste0("species   : ", species),
+                                               paste0("strain    : ", organism),
+                                               paste0("protein   : ", UniProt_acc),
+                                               paste0("sequence  : ", pep_aa),
+                                               paste0("enrichment frequency: ", round(freq, 3)),
+                                               sep = "<br>"), 
+                                  no   = paste(paste0("peptide 1: ", name),
+                                               paste0("virus    : ", subject_organism),
+                                               paste0("peptide 2: ", nameend),
+                                               paste0("virus    : ", pattern_organism),
+                                               paste0("alignment: ", string_compare), 
+                                               paste0("sequence similarity: ", round(sim_score, 3)),
+                                               paste0("Ab reactivity correlation: ", round(cor, 3)),
+                                               paste0("Ab hit jaccard index: ", round(jaccard, 3)),
+                                               sep = "<br>")))
   }
   
   
@@ -135,7 +147,7 @@ epitope_network_visualization <- function(net_df,
                          values = vertex_color_pal)
     
     warning("the size aesthetic mapping is used to adjust edge width, 
-            so enrichment frequence is not reflected by point size.")
+            so peptide enrichment frequence is not reflected by point size.")
     
   }else if(edge_presentation == "color"){  # similarity score shown by gray scale
     
@@ -261,6 +273,16 @@ ui <- fluidPage(
                      multiple = TRUE, 
                      options = list(placeholder = "type UniProt accession numbers")),
       
+      # filter of peptide frequency
+      sliderInput(inputId = "frequency",
+                  label = "Enrichment frequency",
+                  min = 0,
+                  max = 1,
+                  value = c(0, 1), 
+                  step = 0.01, 
+                  ticks = FALSE, 
+                  dragRange = TRUE),
+      
       # seed for determine the coordinate of vertices
       numericInput(inputId = "seed", 
                    label = "Seed", 
@@ -315,8 +337,8 @@ ui <- fluidPage(
                   ticks = FALSE, 
                   dragRange = TRUE),
       
-      sliderInput(inputId = "phi",
-                  label = "Co-occurrence phi",
+      sliderInput(inputId = "cor",
+                  label = "Ab reactivity correlation",
                   min = -1,
                   max = 1,
                   value = c(-1, 1), 
@@ -324,8 +346,8 @@ ui <- fluidPage(
                   ticks = FALSE, 
                   dragRange = TRUE),
       
-      sliderInput(inputId = "prop",
-                  label = "Co-occurrence proportion",
+      sliderInput(inputId = "jaccard",
+                  label = "Ab hit jaccard index",
                   min = 0,
                   max = 1,
                   value = c(0, 1), 
@@ -333,104 +355,66 @@ ui <- fluidPage(
                   ticks = FALSE, 
                   dragRange = TRUE),
       
-      sliderInput(inputId = "cor",
-                  label = "z-score correlation",
-                  min = -1,
-                  max = 1,
-                  value = c(-1, 1), 
-                  step = 0.01, 
-                  ticks = FALSE, 
-                  dragRange = TRUE),
+      selectInput(inputId = "same_family", 
+                  label = "Same family", 
+                  choices = c("yes", "no", "both"), 
+                  selected = "both", 
+                  multiple = FALSE),
       
-      sliderInput(inputId = "cor_ts",
-                  label = "temporal z-score correlation",
-                  min = -1,
-                  max = 1,
-                  value = c(-1, 1), 
-                  step = 0.01, 
-                  ticks = FALSE, 
-                  dragRange = TRUE)
+      selectInput(inputId = "same_genus", 
+                  label = "Same genus", 
+                  choices = c("yes", "no", "both"), 
+                  selected = "both", 
+                  multiple = FALSE),
       
+      selectInput(inputId = "same_species", 
+                  label = "Same species", 
+                  choices = c("yes", "no", "both"), 
+                  selected = "both", 
+                  multiple = FALSE),
+      
+      selectInput(inputId = "same_organism", 
+                  label = "Same organism", 
+                  choices = c("yes", "no", "both"), 
+                  selected = "both", 
+                  multiple = FALSE),
+      
+      selectInput(inputId = "tiling", 
+                  label = "Tiling epitopes", 
+                  choices = c("yes", "no", "both"), 
+                  selected = "both", 
+                  multiple = FALSE),
+      
+      br(),
+      
+      actionButton(inputId = "filter", label = "Filter")
     ),
     
     # Output: interactive network by plotly
     column(8,
            fluidRow(
+
+             column(10, 
+                    textOutput(outputId = "n_node")), 
              
-             # plotlyOutput("plotly_seq"), 
-             tabsetPanel(type = "tabs",
-                         tabPanel("sequence similarity", 
-                                  plotlyOutput("plotly_seq")),
-                         tabPanel("co-occurrence phi",
-                                  plotlyOutput("plotly_phi")),
-                         tabPanel("co-occurrence proportion",
-                                  plotlyOutput("plotly_prop")),
-                         tabPanel("z-score correlation",
-                                  plotlyOutput("plotly_cor")),
-                         tabPanel("z-score correlation (ts)",
-                                  plotlyOutput("plotly_cor_ts"))
-             ),
-             
-             br(),
-             
-             textOutput(outputId = "n_node"),
-             
-             hr(), 
-             
-             column(3, 
-                    selectInput(inputId = "same_family", 
-                                label = "Same family", 
-                                choices = c("yes", "no", "both"), 
-                                selected = "both", 
-                                multiple = FALSE),
-                    
-                    selectInput(inputId = "same_genus", 
-                                label = "Same genus", 
-                                choices = c("yes", "no", "both"), 
-                                selected = "both", 
-                                multiple = FALSE)
-             ),
-             
-             column(3, 
-                    
-                    selectInput(inputId = "same_species", 
-                                label = "Same species", 
-                                choices = c("yes", "no", "both"), 
-                                selected = "both", 
-                                multiple = FALSE),
-                    
-                    selectInput(inputId = "same_organism", 
-                                label = "Same organism", 
-                                choices = c("yes", "no", "both"), 
-                                selected = "both", 
-                                multiple = FALSE)
-             ),
-             
-             column(3, 
-                    selectInput(inputId = "tiling", 
-                                label = "Tiling epitopes", 
-                                choices = c("yes", "no", "both"), 
-                                selected = "both", 
-                                multiple = FALSE),
-                    
-                    br(),
-                    
-                    actionButton(inputId = "filter", label = "Filter")
-             ),
-             
-             column(3, 
+             column(2, 
                     selectInput(inputId = "color_var", 
                                 label = "Color of nodes", 
                                 choices = c("family", "genus", "species", "organism"), 
                                 selected = "family",
-                                multiple = FALSE),
-                    
-                    selectInput(inputId = "vertex_size", 
-                                label = "Size of nodes", 
-                                choices = c("mean prevalence", "max prevalence", "overall prevalence"), 
-                                selected = "max prevalence",
-                                multiple = FALSE)
+                                multiple = FALSE)),
+             
+             br(),
+             
+             tabsetPanel(type = "tabs",
+                         tabPanel("sequence similarity", 
+                                  plotlyOutput("plotly_seq")),
+                         tabPanel("antibody reactivity correlation",
+                                  plotlyOutput("plotly_cor")),
+                         tabPanel("antibody hit jaccard index",
+                                  plotlyOutput("plotly_jaccard"))
              )
+             
            )
     )
   )
@@ -559,7 +543,7 @@ server <- function(input, output, session) {
   # build the network
   network_dt <- eventReactive(input$go, {
     
-    # vextices
+    ### vextices
     if("all" %in% input$family){  # filter family
       vertex_d <- epitope_info
     }else{
@@ -595,7 +579,16 @@ server <- function(input, output, session) {
         dplyr::filter(UniProt_acc %in% input$uniprot)
     }
     
-    # edges
+    if("freq" %in% names(epitope_info)){  # filter by peptide's enrichment frequency (column "freq")
+      vertex_d <- vertex_d %>% 
+        dplyr::filter(freq >= input$frequency[1], freq <= input$frequency[2])
+    }else{
+      vertex_d <- vertex_d %>% 
+        dplyr::mutate(freq = 1)
+    }
+    
+    
+    ### edges
     edge_d <- epitope_pair %>% 
       dplyr::filter(subject_id %in% vertex_d$id,
                     pattern_id %in% vertex_d$id)
@@ -650,18 +643,12 @@ server <- function(input, output, session) {
         dplyr::filter((sim_score >= input$sim_score[1] & 
                        sim_score <= input$sim_score[2]) | 
                        is.na(sim_score)) %>% 
-        dplyr::filter((phi >= input$phi[1] & 
-                       phi <= input$phi[2]) | 
-                       is.na(phi)) %>% 
-        dplyr::filter((mean_prop >= input$prop[1] & 
-                       mean_prop <= input$prop[2]) | 
-                       is.na(mean_prop)) %>% 
         dplyr::filter((cor >= input$cor[1] & 
-                       cor <= input$cor[2]) | 
-                       is.na(cor)) %>% 
-        dplyr::filter((cor_ts >= input$cor_ts[1] & 
-                       cor_ts <= input$cor_ts[2]) | 
-                       is.na(cor_ts))
+                         cor <= input$cor[2]) | 
+                        is.na(cor)) %>% 
+        dplyr::filter((mean_prop >= input$jaccard[1] & 
+                       mean_prop <= input$jaccard[2]) | 
+                       is.na(mean_prop))
       
       # filter epitope pairs by their virus family
       if(input$same_family == "yes"){
@@ -717,10 +704,6 @@ server <- function(input, output, session) {
     
     if(nrow(network_flt()) > 0){
       
-      if(input$vertex_size == "mean prevalence")    v <- "freq_mean"
-      if(input$vertex_size == "max prevalence")     v <- "freq_max"
-      if(input$vertex_size == "overall prevalence") v <- "freq_total"
-      
       epitope_network_visualization(net_df = network_flt(),
                                     color_var = input$color_var,
                                     color_title = "",
@@ -728,8 +711,7 @@ server <- function(input, output, session) {
                                     edge_var = "sim_score",
                                     edge_title = "",
                                     edge_presentation = "color",
-                                    vertex_size_var = v,
-                                    vertex_size_title = "",
+                                    vertex_size_var = "freq",
                                     fig_title = "network of sequence similarity",
                                     interactive_plot = TRUE)
       
@@ -740,70 +722,36 @@ server <- function(input, output, session) {
   })
   
   
-  # visualize the network: co-occurrence phi coefficient
-  output$plotly_phi <- renderPlotly({
+  # visualize the network: co-occurrence jaccard index
+  output$plotly_jaccard <- renderPlotly({
     
     req(network_flt())
     
     if(nrow(network_flt()) > 0){
       
-      if(input$vertex_size == "mean prevalence")    v <- "freq_mean"
-      if(input$vertex_size == "max prevalence")     v <- "freq_max"
-      if(input$vertex_size == "overall prevalence") v <- "freq_total"
-      
       epitope_network_visualization(net_df = network_flt(),
                                     color_var = input$color_var,
                                     color_title = "",
                                     color_pal = manualPalette,
-                                    edge_var = "phi",
+                                    edge_var = "jaccard",
                                     edge_title = "",
                                     edge_presentation = "color",
-                                    vertex_size_var = v,
+                                    vertex_size_var = "freq",
                                     vertex_size_title = "",
-                                    fig_title = "network of co-occurrence phi coefficient",
+                                    fig_title = "network of antibody hit co-occurrence",
                                     interactive_plot = TRUE)
     }else{
       plotly_empty(type = "scatter", mode = "markers")
     }
   })
   
-  # visualize the network: co-occurrence proportion coefficient
-  output$plotly_prop <- renderPlotly({
-    
-    req(network_flt())
-    
-    if(nrow(network_flt()) > 0){
-      
-      if(input$vertex_size == "mean prevalence")    v <- "freq_mean"
-      if(input$vertex_size == "max prevalence")     v <- "freq_max"
-      if(input$vertex_size == "overall prevalence") v <- "freq_total"
-      
-      epitope_network_visualization(net_df = network_flt(),
-                                    color_var = input$color_var,
-                                    color_title = "",
-                                    color_pal = manualPalette,
-                                    edge_var = "mean_prop",
-                                    edge_title = "",
-                                    edge_presentation = "color",
-                                    vertex_size_var = v,
-                                    vertex_size_title = "",
-                                    fig_title = "network of co-occurrence proportion",
-                                    interactive_plot = TRUE)
-    }else{
-      plotly_empty(type = "scatter", mode = "markers")
-    }
-  })
   
-  # visualize the network: co-occurrence proportion coefficient
+  # visualize the network: correlation
   output$plotly_cor <- renderPlotly({
     
     req(network_flt())
     
     if(nrow(network_flt()) > 0){
-      
-      if(input$vertex_size == "mean prevalence")    v <- "freq_mean"
-      if(input$vertex_size == "max prevalence")     v <- "freq_max"
-      if(input$vertex_size == "overall prevalence") v <- "freq_total"
       
       epitope_network_visualization(net_df = network_flt(),
                                     color_var = input$color_var,
@@ -812,36 +760,9 @@ server <- function(input, output, session) {
                                     edge_var = "cor",
                                     edge_title = "",
                                     edge_presentation = "color",
-                                    vertex_size_var = v,
+                                    vertex_size_var = "freq",
                                     vertex_size_title = "",
-                                    fig_title = "network of z-score correlation without temporal information",
-                                    interactive_plot = TRUE)
-    }else{
-      plotly_empty(type = "scatter", mode = "markers")
-    }
-  })
-  
-  # visualize the network: co-occurrence proportion coefficient
-  output$plotly_cor_ts <- renderPlotly({
-    
-    req(network_flt())
-    
-    if(nrow(network_flt()) > 0){
-      
-      if(input$vertex_size == "mean prevalence")    v <- "freq_mean"
-      if(input$vertex_size == "max prevalence")     v <- "freq_max"
-      if(input$vertex_size == "overall prevalence") v <- "freq_total"
-      
-      epitope_network_visualization(net_df = network_flt(),
-                                    color_var = input$color_var,
-                                    color_title = "",
-                                    color_pal = manualPalette,
-                                    edge_var = "cor_ts",
-                                    edge_title = "",
-                                    edge_presentation = "color",
-                                    vertex_size_var = v,
-                                    vertex_size_title = "",
-                                    fig_title = "network of z-score correlation with temporal information",
+                                    fig_title = "network of antibody reactivity correlation",
                                     interactive_plot = TRUE)
     }else{
       plotly_empty(type = "scatter", mode = "markers")
