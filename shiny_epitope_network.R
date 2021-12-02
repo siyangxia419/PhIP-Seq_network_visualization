@@ -20,13 +20,14 @@
 # a) packages -------------------------------------------------------------
 
 # install the packages below if not already installed
-load_lib <- c("shiny", "shinythemes", "tidyverse", "cowplot", "here",
-              "igraph", "ggnetwork", "intergraph", "plotly", "htmlwidgets")
+load_lib <- c("shiny", "shinythemes", 
+              "tidyverse", "here", "devtools", "tools", 
+              "igraph", "ggnetwork", "intergraph", 
+              "cowplot", "plotly", "htmlwidgets")
 install_lib <- load_lib[!load_lib %in% installed.packages()]
 for(lib in install_lib) install.packages(lib, dependencies=TRUE)
 
 # install virlink (a customized package for pairwise peptide analysis)
-if(!("devtools" %in% installed.packages())) install.packages("devtools")
 if(!("virlink" %in% installed.packages())){
   devtools::install_github(repo = "siyangxia419/virlink", 
                            ref = "main",
@@ -237,6 +238,18 @@ ui <- fluidPage(
     
     # input
     column(2, 
+           
+      # allow the user to upload a file that contains peptide information
+      fileInput(inputId = "peptide_upload",
+                label = "Choose peptide information file",
+                multiple = FALSE,
+                accept = c(".csv", ".tsv")),
+      
+      # allow the user to upload a file that contains PhIP-Seq antibody reactivity profile
+      fileInput(inputId = "reactivity_upload",
+                label = "Choose antibody reactivity file",
+                multiple = FALSE,
+                accept = c(".csv", ".tsv")),
       
       # select virus families
       selectizeInput(inputId = "family", 
@@ -644,11 +657,11 @@ server <- function(input, output, session) {
                        sim_score <= input$sim_score[2]) | 
                        is.na(sim_score)) %>% 
         dplyr::filter((cor >= input$cor[1] & 
-                         cor <= input$cor[2]) | 
-                        is.na(cor)) %>% 
-        dplyr::filter((mean_prop >= input$jaccard[1] & 
-                       mean_prop <= input$jaccard[2]) | 
-                       is.na(mean_prop))
+                       cor <= input$cor[2]) | 
+                       is.na(cor)) %>% 
+        dplyr::filter((jaccard >= input$jaccard[1] & 
+                       jaccard <= input$jaccard[2]) | 
+                       is.na(jaccard))
       
       # filter epitope pairs by their virus family
       if(input$same_family == "yes"){
