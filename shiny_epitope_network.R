@@ -244,51 +244,18 @@ ui <- fluidPage(
                 multiple = FALSE,
                 accept = c(".csv", ".tsv")),
       
-      # allow the user to upload a file that contains PhIP-Seq antibody reactivity profile
-      fileInput(inputId = "reactivity_upload",
-                label = "Choose antibody reactivity file",
-                multiple = FALSE,
-                accept = c(".csv", ".tsv")),
-      
       # allow the user to select variables to perform further filtering of the peptides
       uiOutput("filter_variable"),
       
       uiOutput("filter1"), 
       
-      # select virus families
-      selectizeInput(inputId = "family", 
-                     label = "Virus family",
-                     choices = NULL,
-                     multiple = TRUE, 
-                     options = list(placeholder = "type names of virus family")),
-      
-      # select virus genus
-      selectizeInput(inputId = "genus", 
-                     label = "Virus genus",
-                     choices = NULL,
-                     multiple = TRUE, 
-                     options = list(placeholder = "type names of virus genus")),
-      
-      # select virus species
-      selectizeInput(inputId = "species", 
-                     label = "Virus species",
-                     choices = NULL,
-                     multiple = TRUE, 
-                     options = list(placeholder = "type names of virus species")),
-      
-      # select virus organism
-      selectizeInput(inputId = "organism", 
-                     label = "Virus organism",
-                     choices = NULL,
-                     multiple = TRUE, 
-                     options = list(placeholder = "type names of virus organism")),
-      
-      # select protein uniprot
-      selectizeInput(inputId = "uniprot", 
-                     label = "UniProt accession number",
-                     choices = NULL,
-                     multiple = TRUE, 
-                     options = list(placeholder = "type UniProt accession numbers")),
+      br(),
+            
+      # allow the user to upload a file that contains PhIP-Seq antibody reactivity profile
+      fileInput(inputId = "reactivity_upload",
+                label = "Choose antibody reactivity file",
+                multiple = FALSE,
+                accept = c(".csv", ".tsv")),
       
       # filter of peptide frequency
       sliderInput(inputId = "frequency",
@@ -300,6 +267,8 @@ ui <- fluidPage(
                   ticks = FALSE, 
                   dragRange = TRUE),
       
+      br(),
+      
       # seed for determine the coordinate of vertices
       numericInput(inputId = "seed", 
                    label = "Seed", 
@@ -310,8 +279,11 @@ ui <- fluidPage(
       
       br(),
       
-      # action button to generate the network figure
-      actionButton(inputId = "go", label = "Submit")
+      actionButton(inputId = "go", label = "Filter peptides"),
+      
+      br(),
+      
+      actionButton(inputId = "calculate", label = "Compute")
       
     ),
     
@@ -445,6 +417,8 @@ ui <- fluidPage(
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
   
+  # a) Upload and filter the peptides -----------------------------------------------------------
+
   # update peptide information data frame based on whether the user upload a file
   peptide_info_dt <- reactive({
   
@@ -485,21 +459,22 @@ server <- function(input, output, session) {
     default_filter <- grep(pattern = "taxon_", x = filter_list, value = TRUE)
     
     # create a multiple selection UI to allow the user to decide which variables to filter
-    selectInput(inputId = "filter_var", 
-                label = "Vriables for further filtering",
-                choices = filter_list,
-                selectize = TRUE,
-                multiple = TRUE, 
-                selected = default_filter)
+    selectizeInput(inputId = "filter_var", 
+                   label = "Vriables for further filtering",
+                   choices = filter_list,
+                   multiple = TRUE, 
+                   options = list(placeholder = "type variable namnes"))
     
   })
   
-  
-  # UI for filtering peptide
+
+  # create UI for filtering peptide
   output$filter1 <- renderUI({
     
     dynamic_ui <- lapply(
+      
       X = input$filter_var, 
+      
       FUN = function(x) {
         if(class(peptide_info_dt()[[x]]) %in% c("integer", "numeric")){
           
@@ -521,9 +496,11 @@ server <- function(input, output, session) {
           # create a multiple selection UI
           return(selectizeInput(inputId = x, 
                                 label = x,
-                                choices = x_fulllist,
+                                choices = c("all", x_fulllist),
                                 multiple = TRUE, 
-                                options = list(placeholder = "type variable options")))
+                                options = list(placeholder = "type variable options",
+                                               delimiter = " ", 
+                                               create = T)))
           
         }
         
@@ -532,206 +509,289 @@ server <- function(input, output, session) {
     return(dynamic_ui)
     
   })
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  # filter the peptide information based on the selected variables
+  peptide_info_filtered <- eventReactive(input$go, {
+    
+    var_list <- input$filter_var
+    
+    dt <- peptide_info_dt()
 
-  
-  
-  
-  # select virus family
-  updateSelectizeInput(session, 
-                       inputId = "family", 
-                       choices = c("all", unique(taxa_protein$family)), 
-                       selected = NULL,
-                       server = TRUE)
-  
-  # select virus genus
-  observeEvent(input$family,
-               {
-                 # update the genus choices according to virus family input
-                 temp <- taxa_protein %>% 
-                 {if(!("all" %in% input$family)){
-                   dplyr::filter(., family %in% input$family)
-                 }else{
-                   .
-                 }}
-                 
-                 updateSelectizeInput(session, 
-                                      inputId = "genus", 
-                                      choices = c("all", unique(temp$genus)), 
-                                      selected = NULL,
-                                      server = TRUE)
-               })
-  
-  # select virus species
-  observeEvent(input$genus,
-               {
-                 # update the species choices according to virus genus input
-                 temp <- taxa_protein %>% 
-                 {if(!("all" %in% input$family)){
-                   dplyr::filter(., family %in% input$family)
-                 }else{
-                   .
-                 }} %>% 
-                 {if(!("all" %in% input$genus)){
-                   dplyr::filter(., genus %in% input$genus)
-                 }else{
-                   .
-                 }}
-                 
-                 updateSelectizeInput(session, 
-                                      inputId = "species", 
-                                      choices = c("all", unique(temp$species)), 
-                                      selected = NULL,
-                                      server = TRUE)
-               })
-  
-  # select virus organism
-  observeEvent(input$species,
-               {
-                 # update the organism choices according to virus species input
-                 temp <- taxa_protein %>% 
-                 {if(!("all" %in% input$family)){
-                   dplyr::filter(., family %in% input$family)
-                 }else{
-                   .
-                 }} %>% 
-                 {if(!("all" %in% input$genus)){
-                   dplyr::filter(., genus %in% input$genus)
-                 }else{
-                   .
-                 }} %>% 
-                 {if(!("all" %in% input$species)){
-                   dplyr::filter(., species %in% input$species)
-                 }else{
-                   .
-                 }}
-                 
-                 updateSelectizeInput(session, 
-                                      inputId = "organism", 
-                                      choices = c("all", unique(temp$organism)), 
-                                      selected = NULL,
-                                      server = TRUE)
-               })
-  
-  # select protein
-  observeEvent(input$organism,
-               {
-                 # update the protein choices according to virus organism input
-                 temp <- taxa_protein %>% 
-                 {if(!("all" %in% input$family)){
-                   dplyr::filter(., family %in% input$family)
-                 }else{
-                   .
-                 }} %>% 
-                 {if(!("all" %in% input$genus)){
-                   dplyr::filter(., genus %in% input$genus)
-                 }else{
-                   .
-                 }} %>% 
-                 {if(!("all" %in% input$species)){
-                   dplyr::filter(., species %in% input$species)
-                 }else{
-                   .
-                 }} %>% 
-                 {if(!("all" %in% input$organism)){
-                   dplyr::filter(., organism %in% input$organism)
-                 }else{
-                   .
-                 }}
-                 
-                 updateSelectizeInput(session, 
-                                      inputId = "uniprot", 
-                                      choices = c("all", unique(temp$UniProt_acc)), 
-                                      selected = NULL,
-                                      server = TRUE)
-               })
-  
-  
+    for(v in var_list){
 
-  
-  # build the network
-  network_dt <- eventReactive(input$go, {
-    
-    ### vextices
-    if("all" %in% input$family){  # filter family
-      vertex_d <- epitope_info
-    }else{
-      vertex_d <- epitope_info %>% 
-        dplyr::filter(family %in% input$family)
+      if(class(dt[[v]]) %in% c("integer", "numeric")){
+
+        dt <- dt %>%
+          dplyr::filter(between(get(v), input[[v]][1], input[[v]][2]))
+        
+      }else{
+        
+        if(!("all" %in% input[[v]])){
+          dt <- dt %>%
+            dplyr::filter(as.character(get(v)) %in% input[[v]])
+        }
+        
+      }
+
     }
     
-    if("all" %in% input$genus){  # filter genus
-      vertex_d <- vertex_d
-    }else{
-      vertex_d <- vertex_d %>% 
-        dplyr::filter(genus %in% input$genus)
-    }
-    
-    if("all" %in% input$species){  # filter species
-      vertex_d <- vertex_d
-    }else{
-      vertex_d <- vertex_d %>% 
-        dplyr::filter(species %in% input$species)
-    }
-    
-    if("all" %in% input$organism){  # filter virus organism
-      vertex_d <- vertex_d
-    }else{
-      vertex_d <- vertex_d %>% 
-        dplyr::filter(organism %in% input$organism)
-    }
-    
-    if("all" %in% input$uniprot){  # filter protein UniProt accession number
-      vertex_d <- vertex_d
-    }else{
-      vertex_d <- vertex_d %>% 
-        dplyr::filter(UniProt_acc %in% input$uniprot)
-    }
-    
-    if("freq" %in% names(epitope_info)){  # filter by peptide's enrichment frequency (column "freq")
-      vertex_d <- vertex_d %>% 
-        dplyr::filter(freq >= input$frequency[1], freq <= input$frequency[2])
-    }else{
-      vertex_d <- vertex_d %>% 
-        dplyr::mutate(freq = 1)
-    }
-    
-    
-    ### edges
-    edge_d <- epitope_pair %>% 
-      dplyr::filter(subject_id %in% vertex_d$id,
-                    pattern_id %in% vertex_d$id)
-    
-    # construct an igraph object
-    net <- igraph::graph_from_data_frame(d = edge_d, 
-                                         vertices = vertex_d, 
-                                         directed = FALSE)
-    
-    # weight to group species and genus together
-    weight_same_family <- 1
-    weight_same_genus <- 1
-    weight_same_species <- 1
-    
-    # weight of edges
-    E(net)$weight <- E(net)$sim_score + 
-      E(net)$same_family  * weight_same_family + 
-      E(net)$same_genus   * weight_same_genus + 
-      E(net)$same_species * weight_same_species
-    
-    # fortify the igraph to a data frame suitable for ggplot2
-    set.seed(input$seed)
-    suppressWarnings({
-      net_fig_df <- ggnetwork::ggnetwork(x = net, 
-                                         layout = igraph::with_fr())
-    })
-    
-    return(net_fig_df)
+    return(dt)
+
   })
   
   
-  # number of epitopes selected
+  # number of peptides selected and a warning message if more than 100 peptides are selected
   output$n_node <- renderText({
-    paste("Number of peptides:", sum(is.na(network_dt()$string_compare)))
+    
+    n_row <- nrow(peptide_info_filtered())
+    
+    text_to_print <- paste("Number of peptides:", n_row)
+    
+    if(n_row > 50){
+      text_to_print <- paste(text_to_print, 
+                             "\nWarning: more than 100 peptides in the dataset.
+                             Calculation may take a long time and the network may be too dense.")
+    }
+    
+    return(text_to_print)
   })
+  
+  
+  # # variables selected
+  # var_list <- reactive({     print(input); return(input$filter_var) })
+  # 
+  # 
+  # 
+  # # get all unique values for the selected filtering variables
+  # peptide_info_options <- reactive({
+  #   
+  #   peptide_info_opt <- peptide_info_dt() %>% 
+  #     dplyr::select(all_of(var_list())) %>% 
+  #     distinct()
+  #   
+  #   print(var_list())
+  #   print(input)
+  # 
+  # })
+
+
+  # observeEvent(input$filter_var,
+  #              {
+  #                print(input)
+  #                # updateSelectizeInput(session,
+  #                #                      inputId = input[[input$filter_var[1]]],
+  #                #                      choices = c("all"),
+  #                #                      selected = NULL,
+  #                #                      server = TRUE)
+  #              })
+  
+  # 
+  # 
+  # 
+  # # select virus family
+  # updateSelectizeInput(session, 
+  #                      inputId = "family", 
+  #                      choices = c("all", unique(taxa_protein$family)), 
+  #                      selected = NULL,
+  #                      server = TRUE,
+  #                      options = list(delimiter = " ", create = T))
+  # 
+  # # select virus genus
+  # observeEvent(input$family,
+  #              {
+  #                # update the genus choices according to virus family input
+  #                temp <- taxa_protein %>% 
+  #                {if(!("all" %in% input$family)){
+  #                  dplyr::filter(., family %in% input$family)
+  #                }else{
+  #                  .
+  #                }}
+  #                
+  #                updateSelectizeInput(session, 
+  #                                     inputId = "genus", 
+  #                                     choices = c("all", unique(temp$genus)), 
+  #                                     selected = NULL,
+  #                                     server = TRUE)
+  #              })
+  # 
+  # # select virus species
+  # observeEvent(input$genus,
+  #              {
+  #                # update the species choices according to virus genus input
+  #                temp <- taxa_protein %>% 
+  #                {if(!("all" %in% input$family)){
+  #                  dplyr::filter(., family %in% input$family)
+  #                }else{
+  #                  .
+  #                }} %>% 
+  #                {if(!("all" %in% input$genus)){
+  #                  dplyr::filter(., genus %in% input$genus)
+  #                }else{
+  #                  .
+  #                }}
+  #                
+  #                updateSelectizeInput(session, 
+  #                                     inputId = "species", 
+  #                                     choices = c("all", unique(temp$species)), 
+  #                                     selected = NULL,
+  #                                     server = TRUE)
+  #              })
+  # 
+  # # select virus organism
+  # observeEvent(input$species,
+  #              {
+  #                # update the organism choices according to virus species input
+  #                temp <- taxa_protein %>% 
+  #                {if(!("all" %in% input$family)){
+  #                  dplyr::filter(., family %in% input$family)
+  #                }else{
+  #                  .
+  #                }} %>% 
+  #                {if(!("all" %in% input$genus)){
+  #                  dplyr::filter(., genus %in% input$genus)
+  #                }else{
+  #                  .
+  #                }} %>% 
+  #                {if(!("all" %in% input$species)){
+  #                  dplyr::filter(., species %in% input$species)
+  #                }else{
+  #                  .
+  #                }}
+  #                
+  #                updateSelectizeInput(session, 
+  #                                     inputId = "organism", 
+  #                                     choices = c("all", unique(temp$organism)), 
+  #                                     selected = NULL,
+  #                                     server = TRUE)
+  #              })
+  # 
+  # # select protein
+  # observeEvent(input$organism,
+  #              {
+  #                # update the protein choices according to virus organism input
+  #                temp <- taxa_protein %>% 
+  #                {if(!("all" %in% input$family)){
+  #                  dplyr::filter(., family %in% input$family)
+  #                }else{
+  #                  .
+  #                }} %>% 
+  #                {if(!("all" %in% input$genus)){
+  #                  dplyr::filter(., genus %in% input$genus)
+  #                }else{
+  #                  .
+  #                }} %>% 
+  #                {if(!("all" %in% input$species)){
+  #                  dplyr::filter(., species %in% input$species)
+  #                }else{
+  #                  .
+  #                }} %>% 
+  #                {if(!("all" %in% input$organism)){
+  #                  dplyr::filter(., organism %in% input$organism)
+  #                }else{
+  #                  .
+  #                }}
+  #                
+  #                updateSelectizeInput(session, 
+  #                                     inputId = "uniprot", 
+  #                                     choices = c("all", unique(temp$UniProt_acc)), 
+  #                                     selected = NULL,
+  #                                     server = TRUE)
+  #              })
+  
+  
+
+  
+  # # build the network
+  # network_dt <- eventReactive(input$go, {
+  #   
+  #   var_list <- input$filter_var
+  #   
+  #   ### vextices
+  #   if("all" %in% input$family){  # filter family
+  #     vertex_d <- epitope_info
+  #   }else{
+  #     vertex_d <- epitope_info %>% 
+  #       dplyr::filter(family %in% input$family)
+  #   }
+  #   
+  #   if("all" %in% input$genus){  # filter genus
+  #     vertex_d <- vertex_d
+  #   }else{
+  #     vertex_d <- vertex_d %>% 
+  #       dplyr::filter(genus %in% input$genus)
+  #   }
+  #   
+  #   if("all" %in% input$species){  # filter species
+  #     vertex_d <- vertex_d
+  #   }else{
+  #     vertex_d <- vertex_d %>% 
+  #       dplyr::filter(species %in% input$species)
+  #   }
+  #   
+  #   if("all" %in% input$organism){  # filter virus organism
+  #     vertex_d <- vertex_d
+  #   }else{
+  #     vertex_d <- vertex_d %>% 
+  #       dplyr::filter(organism %in% input$organism)
+  #   }
+  #   
+  #   if("all" %in% input$uniprot){  # filter protein UniProt accession number
+  #     vertex_d <- vertex_d
+  #   }else{
+  #     vertex_d <- vertex_d %>% 
+  #       dplyr::filter(UniProt_acc %in% input$uniprot)
+  #   }
+  #   
+  #   if("freq" %in% names(epitope_info)){  # filter by peptide's enrichment frequency (column "freq")
+  #     vertex_d <- vertex_d %>% 
+  #       dplyr::filter(freq >= input$frequency[1], freq <= input$frequency[2])
+  #   }else{
+  #     vertex_d <- vertex_d %>% 
+  #       dplyr::mutate(freq = 1)
+  #   }
+  #   
+  #   
+  #   ### edges
+  #   edge_d <- epitope_pair %>% 
+  #     dplyr::filter(subject_id %in% vertex_d$id,
+  #                   pattern_id %in% vertex_d$id)
+  #   
+  #   # construct an igraph object
+  #   net <- igraph::graph_from_data_frame(d = edge_d, 
+  #                                        vertices = vertex_d, 
+  #                                        directed = FALSE)
+  #   
+  #   # weight to group species and genus together
+  #   weight_same_family <- 1
+  #   weight_same_genus <- 1
+  #   weight_same_species <- 1
+  #   
+  #   # weight of edges
+  #   E(net)$weight <- E(net)$sim_score + 
+  #     E(net)$same_family  * weight_same_family + 
+  #     E(net)$same_genus   * weight_same_genus + 
+  #     E(net)$same_species * weight_same_species
+  #   
+  #   # fortify the igraph to a data frame suitable for ggplot2
+  #   set.seed(input$seed)
+  #   suppressWarnings({
+  #     net_fig_df <- ggnetwork::ggnetwork(x = net, 
+  #                                        layout = igraph::with_fr())
+  #   })
+  #   
+  #   return(net_fig_df)
+  # })
+  
   
   
   # filter the network
