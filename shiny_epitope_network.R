@@ -45,16 +45,15 @@ rm(install_lib, lib)
 # b) data and global variables --------------------------------------------
 
 # load the pairwise analysis dataset
-load("shiny_network_visualization_data_full.RData")
+load("VRC_full_data.RData")
 
 # manual color palette
 manualPalette = c("#0072B2", "#56B4E9", "#009E73", "#F0E442", "#D55E00")
 
 # virus taxa and protein UniProt accession numbers
-taxa_protein <- epitope_info %>% 
-  dplyr::select(family, genus, species, organism, UniProt_acc) %>% 
-  dplyr::distinct() %>% 
-  dplyr::arrange(family, genus, species, organism, UniProt_acc)
+taxa_protein <- VRC_peptide_info %>% 
+  dplyr::select(starts_with("taxon_"), UniProt_acc) %>% 
+  dplyr::distinct()
 
 
 # c) function to plot the network -----------------------------------------
@@ -251,6 +250,11 @@ ui <- fluidPage(
                 multiple = FALSE,
                 accept = c(".csv", ".tsv")),
       
+      # allow the user to select variables to perform further filtering of the peptides
+      uiOutput("filter_variable"),
+      
+      uiOutput("filter1"), 
+      
       # select virus families
       selectizeInput(inputId = "family", 
                      label = "Virus family",
@@ -325,18 +329,18 @@ ui <- fluidPage(
       
       sliderInput(inputId = "matches",
                   label = "# of matched amino acids",
-                  min = min(epitope_pair$matches),
-                  max = max(epitope_pair$matches),
-                  value = c(5, max(epitope_pair$matches)),
+                  min = 1,
+                  max = 56,
+                  value = c(5, 56),
                   step = 1, 
                   ticks = FALSE, 
                   dragRange = TRUE),
       
       sliderInput(inputId = "match_seq_length",
                   label = "Continuous matches",
-                  min = min(epitope_pair$match_seq_length),
-                  max = max(epitope_pair$match_seq_length),
-                  value = c(3, max(epitope_pair$match_seq_length)), 
+                  min = 1,
+                  max = 56,
+                  value = c(3, 56), 
                   step = 1, 
                   ticks = FALSE, 
                   dragRange = TRUE),
@@ -440,6 +444,97 @@ ui <- fluidPage(
 
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
+  
+  # update peptide information data frame based on whether the user upload a file
+  peptide_info_dt <- reactive({
+  
+    if(is.null(input$peptide_upload)){  # no file upload, use the pre-loaded VRC data
+      
+      peptide_info <- VRC_peptide_info
+      
+    }else{                              # user updated a file
+      
+      req(input$peptide_upload)         
+      
+      peptide_upload_file <- input$peptide_upload
+      ext <- tools::file_ext(peptide_upload_file$datapath)  # file extension
+      
+      # read the file according to the file extension
+      if(ext == "csv"){
+        peptide_info <- read_csv(file = peptide_upload_file$datapath,
+                                 col_names = TRUE) 
+      }else if(ext == "tsv"){
+        peptide_info <- read_tsv(file = peptide_upload_file$datapath,
+                                 col_names = TRUE)
+      }else{
+        stop("Please select from csv or tsv files.")
+      }
+      
+    }
+    return(peptide_info)
+  })
+  
+  
+  # update the UI depending on what columns exist in the peptide information data
+  output$filter_variable <- renderUI({
+    
+    # a list of variables in peptide info
+    filter_list <- names(peptide_info_dt())
+    filter_list <- filter_list[!(filter_list %in% c("u_pep_id", "pep_aa"))]
+    
+    default_filter <- grep(pattern = "taxon_", x = filter_list, value = TRUE)
+    
+    # create a multiple selection UI to allow the user to decide which variables to filter
+    selectInput(inputId = "filter_var", 
+                label = "Vriables for further filtering",
+                choices = filter_list,
+                selectize = TRUE,
+                multiple = TRUE, 
+                selected = default_filter)
+    
+  })
+  
+  
+  # UI for filtering peptide
+  output$filter1 <- renderUI({
+    
+    dynamic_ui <- lapply(
+      X = input$filter_var, 
+      FUN = function(x) {
+        if(class(peptide_info_dt()[[x]]) %in% c("integer", "numeric")){
+          
+          x_fullrange <- range(peptide_info_dt()[[x]], na.rm = TRUE)
+          
+          # create a slider bar
+          return(sliderInput(inputId = x,
+                             label = x,
+                             min = x_fullrange[1],
+                             max = x_fullrange[2],
+                             value = x_fullrange, 
+                             ticks = FALSE, 
+                             dragRange = TRUE))
+          
+        }else{
+          
+          x_fulllist <- sort(unique(as.character(peptide_info_dt()[[x]])))
+          
+          # create a multiple selection UI
+          return(selectizeInput(inputId = x, 
+                                label = x,
+                                choices = x_fulllist,
+                                multiple = TRUE, 
+                                options = list(placeholder = "type variable options")))
+          
+        }
+        
+      })
+    
+    return(dynamic_ui)
+    
+  })
+
+  
+  
   
   # select virus family
   updateSelectizeInput(session, 
