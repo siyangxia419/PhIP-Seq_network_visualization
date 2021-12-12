@@ -9,7 +9,7 @@
 # Daniel Monaco
 # H. Benjamin Larman
 #
-# Version: 2021-12-01
+# Version: 2021-12-08
 ###
 
 
@@ -257,6 +257,21 @@ ui <- fluidPage(
                 multiple = FALSE,
                 accept = c(".csv", ".tsv")),
       
+      # select samples to look at
+      selectizeInput(inputId = "select_sample", 
+                     label = "Select samples",
+                     choices = c("all", colnames(VRC_reactivity)[-1]),
+                     multiple = TRUE, 
+                     options = list(placeholder = "type sample namnes")),
+      
+      # threshold of z-scores or fold-changes that determines significant enrichment
+      numericInput(inputId = "hit_thres", 
+                   label = "Threshold of hit", 
+                   min = 0, 
+                   max = 1000, 
+                   value = 1, 
+                   step = 1),
+      
       # filter of peptide frequency
       sliderInput(inputId = "frequency",
                   label = "Enrichment frequency",
@@ -384,7 +399,7 @@ ui <- fluidPage(
            fluidRow(
 
              column(10, 
-                    textOutput(outputId = "n_node")), 
+                    htmlOutput(outputId = "n_node")), 
              
              column(2, 
                     selectInput(inputId = "color_var", 
@@ -417,10 +432,10 @@ ui <- fluidPage(
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
   
-  # a) Upload and filter the peptides -----------------------------------------------------------
+  # a) Upload the peptide metadata and select variables to filter ---------
 
   # update peptide information data frame based on whether the user upload a file
-  peptide_info_dt <- reactive({
+  peptide_metadata <- reactive({
   
     if(is.null(input$peptide_upload)){  # no file upload, use the pre-loaded VRC data
       
@@ -453,7 +468,7 @@ server <- function(input, output, session) {
   output$filter_variable <- renderUI({
     
     # a list of variables in peptide info
-    filter_list <- names(peptide_info_dt())
+    filter_list <- names(peptide_metadata())
     filter_list <- filter_list[!(filter_list %in% c("u_pep_id", "pep_aa"))]
     
     default_filter <- grep(pattern = "taxon_", x = filter_list, value = TRUE)
@@ -476,9 +491,9 @@ server <- function(input, output, session) {
       X = input$filter_var, 
       
       FUN = function(x) {
-        if(class(peptide_info_dt()[[x]]) %in% c("integer", "numeric")){
+        if(class(peptide_metadata()[[x]]) %in% c("integer", "numeric")){
           
-          x_fullrange <- range(peptide_info_dt()[[x]], na.rm = TRUE)
+          x_fullrange <- range(peptide_metadata()[[x]], na.rm = TRUE)
           
           # create a slider bar
           return(sliderInput(inputId = x,
@@ -491,7 +506,7 @@ server <- function(input, output, session) {
           
         }else{
           
-          x_fulllist <- sort(unique(as.character(peptide_info_dt()[[x]])))
+          x_fulllist <- sort(unique(as.character(peptide_metadata()[[x]])))
           
           # create a multiple selection UI
           return(selectizeInput(inputId = x, 
@@ -512,20 +527,61 @@ server <- function(input, output, session) {
   
   
   
+  # b) Upload antibody reactivity profile and select samples ------------------------------------
+  
+  # update peptide information data frame based on whether the user upload a file
+  ab_data <- reactive({
+    
+    if(is.null(input$reactivity_upload)){  # no file upload, use the pre-loaded VRC data
+      
+      ab <- VRC_reactivity
+      
+    }else{                              # user updated a file
+      
+      req(input$peptide_upload)         
+      
+      reactivity_upload_file <- input$reactivity_upload
+      ext <- tools::file_ext(reactivity_upload_file$datapath)  # file extension
+      
+      # read the file according to the file extension
+      if(ext == "csv"){
+        ab <- read_csv(file = reactivity_upload_file$datapath,
+                       col_names = TRUE) 
+      }else if(ext == "tsv"){
+        ab <- read_tsv(file = reactivity_upload_file$datapath,
+                       col_names = TRUE)
+      }else{
+        stop("Please select from csv or tsv files.")
+      }
+      
+    }
+    
+    return(ab)
+  })
   
   
+  observeEvent(input$reactivity_upload, 
+               {
+                 
+                 temp <- names(ab_data())[-1]
+                 updateSelectizeInput(session,
+                                      inputId = "select_sample",
+                                      choices = c("all", temp),
+                                      selected = NULL,
+                                      options = list(delimiter = " ", create = T))
+               })
   
   
-  
-  
-  
-  
-  # filter the peptide information based on the selected variables
+
+  # c) filter the peptides and samples ----------------------------------------------------------
+
+  ### filter the peptide information based on the selected variables
   peptide_info_filtered <- eventReactive(input$go, {
     
+    # filter peptide metadata according to the selected variables
     var_list <- input$filter_var
     
-    dt <- peptide_info_dt()
+    dt <- peptide_metadata()
 
     for(v in var_list){
 
@@ -545,25 +601,69 @@ server <- function(input, output, session) {
 
     }
     
+    # further filter peptides according to their prevalence in the selected samples
+    sample_list    <- input$select_sample
+    if("all" %in% sample_list | is.null(sample_list)) sample_list <- names(ab_data())[-1]
+    
+    hit_thres      <- input$hit_thres
+    freq_threshold <- input$frequency
+    
+    hit_freq <- ab_data() %>% 
+      select(u_pep_id, all_of(sample_list)) %>% 
+      filter(u_pep_id %in% dt$u_pep_id) %>% 
+      pivot_longer(cols = all_of(sample_list), names_to = "sample", values_to = "original") %>% 
+      mutate(hit = as.integer(original > hit_thres)) %>% 
+      group_by(u_pep_id) %>% 
+      summarise(n_sample = n(),
+                n_hit    = sum(hit),
+                .groups  = "drop") %>% 
+      mutate(frequency = n_hit / n_sample)
+    
+    dt <- dt %>% 
+      left_join(hit_freq, by = "u_pep_id") %>% 
+      filter(frequency >= freq_threshold[1], frequency <= freq_threshold[2])
+    
     return(dt)
 
   })
   
   
-  # number of peptides selected and a warning message if more than 100 peptides are selected
-  output$n_node <- renderText({
+  ### filter the peptide information based on the selected variables
+  ab_reactivity_filtered <- eventReactive(input$go, {
     
-    n_row <- nrow(peptide_info_filtered())
+    sample_list <- input$select_sample
+    if("all" %in% sample_list | is.null(sample_list)) sample_list <- names(ab_data())[-1]
     
-    text_to_print <- paste("Number of peptides:", n_row)
+    dt <- ab_data() %>% 
+      select(u_pep_id, all_of(sample_list))
     
-    if(n_row > 50){
+    return(dt)
+    
+  })
+  
+  
+  ### filter the peptides by prevalence in the selected samples
+  
+  
+  
+  # number of peptides and samples selected and a warning message if more than 100 peptides are selected
+  output$n_node <- renderUI({
+    
+    n_pep <- nrow(peptide_info_filtered())
+    n_sam <- ncol(ab_reactivity_filtered()) - 1
+    
+    text_to_print <- paste(paste("Number of peptides:", n_pep),
+                           paste("Number of samples:", n_sam),
+                           sep = '<br/>')
+    
+    if(n_pep > 50){
       text_to_print <- paste(text_to_print, 
-                             "\nWarning: more than 100 peptides in the dataset.
-                             Calculation may take a long time and the network may be too dense.")
+                             "Warning: more than 100 peptides in the dataset.
+                             Calculation may take a long time and the network may be too dense.",
+                             sep = '<br/>')
     }
     
-    return(text_to_print)
+    return(HTML(text_to_print))
   })
   
   
