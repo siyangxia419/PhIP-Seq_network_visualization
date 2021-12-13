@@ -9,3 +9,5 @@
 *.tiff
 *.html
 *.tsv
+reference/
+not used/
