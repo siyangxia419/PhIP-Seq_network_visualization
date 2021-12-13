@@ -9,7 +9,7 @@
 # Daniel Monaco
 # H. Benjamin Larman
 #
-# Version: 2021-12-08
+# Version: 2021-12-13
 ###
 
 
@@ -22,6 +22,7 @@
 # install the packages below if not already installed
 load_lib <- c("shiny", "shinythemes", 
               "tidyverse", "here", "devtools", "tools", 
+              "rBLAST", "seqinr", 
               "igraph", "ggnetwork", "intergraph", 
               "cowplot", "plotly", "htmlwidgets")
 install_lib <- load_lib[!load_lib %in% installed.packages()]
@@ -56,7 +57,60 @@ taxa_protein <- VRC_peptide_info %>%
   dplyr::distinct()
 
 
-# c) function to plot the network -----------------------------------------
+
+# c) function for blastp ----------------------------------------------------------------------
+
+blastp_dm <- function(pep_dt, fasta_dir = "C:/Users/siyang_xia/R/"){
+  
+  # write the sequences to FASTA files
+  write.fasta(sequences = as.list(pep_dt$pep_aa),
+              names = pep_dt$u_pep_id, 
+              file.out = paste0(fasta_dir, "db.fasta"))
+  
+  write.fasta(sequences = as.list(pep_dt$pep_aa),
+              names = pep_dt$u_pep_id, 
+              file.out = paste0(fasta_dir, "query.fasta"))
+  
+  # make the database
+  makeblastdb(file = paste0(fasta_dir, "db.fasta"),
+              dbtype = "prot")
+  dbp <- blast(db = paste0(fasta_dir, "db.fasta"), 
+               type="blastp")
+  
+  # query sequences
+  seqp <- readAAStringSet(paste0(fasta_dir, "query.fasta"))
+  
+  # blast calculation
+  predp <- predict(dbp, seqp,
+                   BLAST_args = "-evalue .1 -max_hsps 1 -soft_masking false -word_size 7 -max_target_seqs 100000",
+                   custom_format = "qseqid sseqid pident length evalue bitscore positive gaps ppos")
+  
+  
+  # arrange the peptide ids
+  predp <- predp %>% 
+    mutate(qseqid = ordered(qseqid, levels = pep_dt$u_pep_id),
+           sseqid = ordered(sseqid, levels = pep_dt$u_pep_id)) %>% 
+    rename(subject_id = qseqid, pattern_id = sseqid)
+  
+  predp[predp$subject_id > predp$pattern_id, c("subject_id", "pattern_id")] <- 
+    predp[predp$subject_id > predp$pattern_id, c("pattern_id", "subject_id")]
+  
+  
+  # add information of the peptides
+  predp <- predp %>% 
+    arrange(subject_id, pattern_id) %>% 
+    as_tibble() %>% 
+    left_join({pep_dt %>% rename_with(~paste0("subject_", .))}, 
+              by = c("subject_id" = "subject_u_pep_id")) %>% 
+    left_join({pep_dt %>% rename_with(~paste0("pattern_", .))}, 
+              by = c("pattern_id" = "pattern_u_pep_id"))
+  
+  return(predp)
+}
+
+
+
+# d) function to plot the network -----------------------------------------
 
 epitope_network_visualization <- function(net_df, 
                                           color_var = "genus",
@@ -297,6 +351,7 @@ ui <- fluidPage(
       actionButton(inputId = "go", label = "Filter peptides"),
       
       br(),
+      br(),
       
       actionButton(inputId = "calculate", label = "Compute")
       
@@ -411,6 +466,10 @@ ui <- fluidPage(
              br(),
              
              tabsetPanel(type = "tabs",
+                         tabPanel("peptide metadata",
+                                  dataTableOutput("peptide_info_table")),
+                         tabPanel("antibody reactivity",
+                                  dataTableOutput("ab_reactivity_table")),
                          tabPanel("sequence similarity", 
                                   plotlyOutput("plotly_seq")),
                          tabPanel("antibody reactivity correlation",
@@ -432,7 +491,7 @@ ui <- fluidPage(
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
   
-  # a) Upload the peptide metadata and select variables to filter ---------
+  # a) upload the peptide metadata and select variables to filter ---------
 
   # update peptide information data frame based on whether the user upload a file
   peptide_metadata <- reactive({
@@ -527,7 +586,7 @@ server <- function(input, output, session) {
   
   
   
-  # b) Upload antibody reactivity profile and select samples ------------------------------------
+  # b) upload antibody reactivity profile and select samples ------------------------------------
   
   # update peptide information data frame based on whether the user upload a file
   ab_data <- reactive({
@@ -642,11 +701,10 @@ server <- function(input, output, session) {
   })
   
   
-  ### filter the peptides by prevalence in the selected samples
   
-  
-  
-  # number of peptides and samples selected and a warning message if more than 100 peptides are selected
+
+  # d) print the number of peptides and samples selected ----------------------------------------
+
   output$n_node <- renderUI({
     
     n_pep <- nrow(peptide_info_filtered())
@@ -665,6 +723,111 @@ server <- function(input, output, session) {
     
     return(HTML(text_to_print))
   })
+  
+  output$peptide_info_table <- renderDataTable(peptide_info_filtered())
+  
+  output$ab_reactivity_table <- renderDataTable(ab_reactivity_filtered())
+  
+  
+  
+  # e) calculate the sequence similarity and reactivity correlation -----------------------------
+  peptide_seq_similarity <- eventReactive(input$calculate, {
+    
+    peptide_id_list <- peptide_info_filtered$u_pep_id
+    
+    ### sequence similarity analysis using the "virlink" package
+    peptide_seq_sim <- peptide_pairwise_alignment(
+      peptides        = {peptide_info_filtered %>% 
+                           rename(id = u_pep_id) %>% 
+                           mutate(id = ordered(id, levels = peptide_id_list))}, 
+      sub_matrix      = "BLOSUM62", 
+      gap_opening     = 10,      # default
+      gap_extension   = 4,       # default
+      align_type      = "local", # default
+      self_comparison = TRUE,    # default
+      full_align      = FALSE,   # default
+      other_info      = TRUE,    # default
+      parallel_ncore  = NULL,    # default
+      output_str      = "tibble")
+    
+    self_align <- peptide_seq_sim %>% filter(subject_id == pattern_id)
+    
+    peptide_seq_sim <- peptide_seq_sim %>% 
+      filter(subject_id != pattern_id) %>% 
+      left_join({self_align %>% select(pattern_id, pattern_score = score)},
+                by = "pattern_id") %>% 
+      left_join({self_align %>% select(subject_id, subject_score = score)},
+                by = "subject_id") %>% 
+      mutate(opt_score      = (pattern_score + subject_score) / 2,
+             sim_score      = score / opt_score,
+             match_seq_length = sapply(X = string_compare,
+                                       FUN = function(x){
+                                         max(nchar(unlist(str_extract_all(string = x, pattern = "[A-Z]+"))))
+                                       })) %>% 
+      mutate(match_seq_length = ifelse(match_seq_length == -Inf, 0, match_seq_length)) %>% 
+      select(-subject_score, -pattern_score) %>% 
+      arrange(subject_id, pattern_id) %>% 
+      as_tibble()
+    
+    
+    ### antibody reactivity correlation
+    ab_reactivity_formatted <- ab_reactivity_filtered %>% 
+      column_to_rownames(var = "u_pep_id") %>% 
+      t() %>% 
+      as.data.frame()
+    
+    ab_cor <- peptide_pairwise_correlation(
+      d             = ab_reactivity_formatted, 
+      analysis_type = "correlation",
+      perform_test  = FALSE,
+      cor_method    = "pearson",
+      output_str    = "tibble")
+    
+    ab_cor <- ab_cor %>% 
+      mutate(id1 = ordered(id1, levels = peptide_id_list),
+             id2 = ordered(id2, levels = peptide_id_list)) %>% 
+      rename(subject_id = id1, pattern_id = id2)
+    
+    ab_cor[ab_cor$subject_id > ab_cor$pattern_id, c("subject_id", "pattern_id")] <- 
+      ab_cor[ab_cor$subject_id > ab_cor$pattern_id, c("pattern_id", "subject_id")]
+    
+    ab_cor <- ab_cor %>% arrange(subject_id, pattern_id)
+    
+    
+    ### antibody reactivity jaccard index
+    ab_hit_formatted <- as.data.frame((ab_reactivity_formatted > input$hit_thres) * 1)
+    
+    ab_jaccard <- peptide_pairwise_correlation(
+      d             = ab_hit_formatted, 
+      analysis_type = "cooccurrence",
+      perform_test  = FALSE,
+      occ_method    = "jaccard",
+      z_threshold   = 1,
+      output_str    = "tibble")
+    
+    ab_jaccard <- ab_jaccard %>% 
+      mutate(id1 = ordered(id1, levels = peptide_id_list),
+             id2 = ordered(id2, levels = peptide_id_list)) %>% 
+      rename(subject_id = id1, pattern_id = id2)
+    
+    ab_jaccard[ab_jaccard$subject_id > ab_jaccard$pattern_id, c("subject_id", "pattern_id")] <- 
+      ab_jaccard[ab_jaccard$subject_id > ab_jaccard$pattern_id, c("pattern_id", "subject_id")]
+    
+    ab_jaccard <- ab_jaccard %>% arrange(subject_id, pattern_id)
+    
+    
+    ### combine the three measurement
+    peptide_pair <- peptide_seq_sim %>% 
+      dplyr::left_join(ab_cor, by = c("subject_id", "pattern_id")) %>% 
+      dplyr::left_join(ab_jaccard, by = c("subject_id", "pattern_id"))
+    
+    
+    return(peptide_pair)
+    
+  })
+  
+  
+  
   
   
   # # variables selected
