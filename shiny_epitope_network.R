@@ -737,9 +737,9 @@ server <- function(input, output, session) {
     
     ### sequence similarity analysis using the "virlink" package
     peptide_seq_sim <- peptide_pairwise_alignment(
-      peptides        = {peptide_info_filtered %>% 
-                           rename(id = u_pep_id) %>% 
-                           mutate(id = ordered(id, levels = peptide_id_list))}, 
+      peptides        = peptide_info_filtered,
+      id_col          = "u_pep_id",
+      seq_col         = "pep_aa",
       sub_matrix      = "BLOSUM62", 
       gap_opening     = 10,      # default
       gap_extension   = 4,       # default
@@ -750,23 +750,21 @@ server <- function(input, output, session) {
       parallel_ncore  = NULL,    # default
       output_str      = "tibble")
     
-    self_align <- peptide_seq_sim %>% filter(subject_id == pattern_id)
+    self_align <- peptide_seq_sim %>% filter(id1 == id2)
     
     peptide_seq_sim <- peptide_seq_sim %>% 
-      filter(subject_id != pattern_id) %>% 
-      left_join({self_align %>% select(pattern_id, pattern_score = score)},
-                by = "pattern_id") %>% 
-      left_join({self_align %>% select(subject_id, subject_score = score)},
-                by = "subject_id") %>% 
-      mutate(opt_score      = (pattern_score + subject_score) / 2,
-             sim_score      = score / opt_score,
+      filter(id1 != id2) %>% 
+      left_join({self_align %>% select(id1, id1_score = score)}, by = "id1") %>% 
+      left_join({self_align %>% select(id2, id2_score = score)}, by = "id2") %>% 
+      mutate(opt_score        = (id1_score + id2_score) / 2,
+             sim_score        = score / opt_score,
              match_seq_length = sapply(X = string_compare,
                                        FUN = function(x){
                                          max(nchar(unlist(str_extract_all(string = x, pattern = "[A-Z]+"))))
                                        })) %>% 
       mutate(match_seq_length = ifelse(match_seq_length == -Inf, 0, match_seq_length)) %>% 
-      select(-subject_score, -pattern_score) %>% 
-      arrange(subject_id, pattern_id) %>% 
+      select(-id1_score, -id2_score) %>% 
+      arrange(id1, id2) %>% 
       as_tibble()
     
     
@@ -783,46 +781,87 @@ server <- function(input, output, session) {
       cor_method    = "pearson",
       output_str    = "tibble")
     
-    ab_cor <- ab_cor %>% 
-      mutate(id1 = ordered(id1, levels = peptide_id_list),
-             id2 = ordered(id2, levels = peptide_id_list)) %>% 
-      rename(subject_id = id1, pattern_id = id2)
-    
-    ab_cor[ab_cor$subject_id > ab_cor$pattern_id, c("subject_id", "pattern_id")] <- 
-      ab_cor[ab_cor$subject_id > ab_cor$pattern_id, c("pattern_id", "subject_id")]
-    
-    ab_cor <- ab_cor %>% arrange(subject_id, pattern_id)
-    
     
     ### antibody reactivity jaccard index
     ab_hit_formatted <- as.data.frame((ab_reactivity_formatted > input$hit_thres) * 1)
     
     ab_jaccard <- peptide_pairwise_correlation(
-      d             = ab_hit_formatted, 
-      analysis_type = "cooccurrence",
-      perform_test  = FALSE,
-      occ_method    = "jaccard",
-      z_threshold   = 1,
-      output_str    = "tibble")
+      d               = ab_hit_formatted, 
+      analysis_type   = "cooccurrence",
+      perform_test    = FALSE,
+      occ_method      = "jaccard",
+      hit_threshold   = 1,
+      output_str      = "tibble")
     
+    
+    ### record the results
+    pairwise_calculation <- list(seq = peptide_seq_sim,
+                                 cor = ab_cor,
+                                 jac = ab_jaccard)
+    
+    
+    ### check if the peptides in the peptide metadata and the antibody reactivity are the same
+    same_peptides <- setequal(peptide_info_filtered$u_pep_id, ab_reactivity_filtered$u_pep_id)
+    pairwise_calculation$same <- same_peptides
+    
+    
+    ### match the id1 and id2 between sequence alignment, ab reactivity correlation and jaccard index
+    
+    # if the peptides are different between the two inputs
+    if(!same_peptides){
+      peptide_id_list <- peptide_id_list[peptide_id_list %in% intersect(peptide_info_filtered$u_pep_id, 
+                                                                        ab_reactivity_filtered$u_pep_id)]
+      
+      peptide_seq_sim <- peptide_seq_sim %>% 
+        filter(id1 %in% peptide_id_list, id2 %in% peptide_id_list)
+      
+      ab_cor <- ab_cor %>% 
+        filter(id1 %in% peptide_id_list, id2 %in% peptide_id_list)
+      
+      ab_jaccard <- ab_jaccard %>% 
+        filter(id1 %in% peptide_id_list, id2 %in% peptide_id_list)
+    }
+    
+    
+    # peptide alignment:
+    peptide_seq_sim <- peptide_seq_sim %>% 
+      mutate(id1 = ordered(id1, levels = peptide_id_list),
+             id2 = ordered(id2, levels = peptide_id_list))
+    
+    peptide_seq_sim[peptide_seq_sim$id1 > peptide_seq_sim$id2, c("id1", "id2")] <- 
+      peptide_seq_sim[peptide_seq_sim$id1 > peptide_seq_sim$id2, c("id2", "id1")]
+    
+    peptide_seq_sim <- peptide_seq_sim %>% arrange(id1, id2)
+    
+    # ab reactivity correlation:
+    ab_cor <- ab_cor %>% 
+      mutate(id1 = ordered(id1, levels = peptide_id_list),
+             id2 = ordered(id2, levels = peptide_id_list))
+    
+    ab_cor[ab_cor$id1 > ab_cor$id2, c("id1", "id2")] <- 
+      ab_cor[ab_cor$id1 > ab_cor$id2, c("id2", "id1")]
+    
+    ab_cor <- ab_cor %>% arrange(id1, id2)
+    
+    # ab jaccard index: 
     ab_jaccard <- ab_jaccard %>% 
       mutate(id1 = ordered(id1, levels = peptide_id_list),
-             id2 = ordered(id2, levels = peptide_id_list)) %>% 
-      rename(subject_id = id1, pattern_id = id2)
+             id2 = ordered(id2, levels = peptide_id_list))
     
-    ab_jaccard[ab_jaccard$subject_id > ab_jaccard$pattern_id, c("subject_id", "pattern_id")] <- 
-      ab_jaccard[ab_jaccard$subject_id > ab_jaccard$pattern_id, c("pattern_id", "subject_id")]
+    ab_jaccard[ab_jaccard$id1 > ab_jaccard$id2, c("id1", "id2")] <- 
+      ab_jaccard[ab_jaccard$id1 > ab_jaccard$id2, c("id2", "id1")]
     
-    ab_jaccard <- ab_jaccard %>% arrange(subject_id, pattern_id)
+    ab_jaccard <- ab_jaccard %>% arrange(id1, id2)
     
     
     ### combine the three measurement
-    peptide_pair <- peptide_seq_sim %>% 
-      dplyr::left_join(ab_cor, by = c("subject_id", "pattern_id")) %>% 
-      dplyr::left_join(ab_jaccard, by = c("subject_id", "pattern_id"))
+    pairwise_calculation$all <- peptide_seq_sim %>% 
+      dplyr::inner_join(ab_cor, by = c("id1", "id2")) %>% 
+      dplyr::inner_join(ab_jaccard, by = c("id1", "id2"))
     
     
-    return(peptide_pair)
+    
+    return(pairwise_calculation)
     
   })
   
