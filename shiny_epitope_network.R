@@ -6,10 +6,11 @@
 #
 # Contributor:
 # Siyang Xia
+# Jennifer L. Remmel
 # Daniel Monaco
 # H. Benjamin Larman
 #
-# Version: 2021-12-13
+# Version: 2021-12-16
 ###
 
 
@@ -60,7 +61,9 @@ taxa_protein <- VRC_peptide_info %>%
 
 # c) function for blastp ----------------------------------------------------------------------
 
-blastp_dm <- function(pep_dt, fasta_dir = "C:/Users/siyang_xia/R/"){
+blastp_dm <- function(pep_dt, 
+                      fasta_dir = "C:/Users/siyang_xia/R/",
+                      other_info = TRUE){
   
   # write the sequences to FASTA files
   write.fasta(sequences = as.list(pep_dt$pep_aa),
@@ -90,20 +93,22 @@ blastp_dm <- function(pep_dt, fasta_dir = "C:/Users/siyang_xia/R/"){
   predp <- predp %>% 
     mutate(qseqid = ordered(qseqid, levels = pep_dt$u_pep_id),
            sseqid = ordered(sseqid, levels = pep_dt$u_pep_id)) %>% 
-    rename(subject_id = qseqid, pattern_id = sseqid)
+    rename(id1 = qseqid, id2 = sseqid)
   
-  predp[predp$subject_id > predp$pattern_id, c("subject_id", "pattern_id")] <- 
-    predp[predp$subject_id > predp$pattern_id, c("pattern_id", "subject_id")]
+  predp[predp$id1 > predp$id2, c("id1", "id2")] <- 
+    predp[predp$id1 > predp$id2, c("id2", "id1")]
   
   
   # add information of the peptides
-  predp <- predp %>% 
-    arrange(subject_id, pattern_id) %>% 
-    as_tibble() %>% 
-    left_join({pep_dt %>% rename_with(~paste0("subject_", .))}, 
-              by = c("subject_id" = "subject_u_pep_id")) %>% 
-    left_join({pep_dt %>% rename_with(~paste0("pattern_", .))}, 
-              by = c("pattern_id" = "pattern_u_pep_id"))
+  if(other_info){
+    predp <- predp %>% 
+      arrange(id1, id2) %>% 
+      as_tibble() %>% 
+      left_join({pep_dt %>% rename_with(~paste0("id1_", .))}, 
+                by = c("id1" = "id1_u_pep_id")) %>% 
+      left_join({pep_dt %>% rename_with(~paste0("id2_", .))}, 
+                by = c("id2" = "id2_u_pep_id"))
+  }
   
   return(predp)
 }
@@ -304,6 +309,8 @@ ui <- fluidPage(
       uiOutput("filter1"), 
       
       br(),
+      hr(),
+      br(),
             
       # allow the user to upload a file that contains PhIP-Seq antibody reactivity profile
       fileInput(inputId = "reactivity_upload",
@@ -337,6 +344,8 @@ ui <- fluidPage(
                   dragRange = TRUE),
       
       br(),
+      hr(),
+      br(),
       
       # seed for determine the coordinate of vertices
       numericInput(inputId = "seed", 
@@ -346,11 +355,19 @@ ui <- fluidPage(
                    value = 111, 
                    step = 1),
       
+      textInput(inputId = "local_dir",
+                label = "local directory",
+                value = "C:/Users/siyang_xia/R/", 
+                placeholder = "local directory (no space)"),
+      
+      br(),
+      hr(),
       br(),
       
       actionButton(inputId = "go", label = "Filter peptides"),
       
       br(),
+      hr(),
       br(),
       
       actionButton(inputId = "calculate", label = "Compute")
@@ -470,6 +487,16 @@ ui <- fluidPage(
                                   dataTableOutput("peptide_info_table")),
                          tabPanel("antibody reactivity",
                                   dataTableOutput("ab_reactivity_table")),
+                         tabPanel("peptide pairwise sequence similarity",
+                                  dataTableOutput("pairwise_seq_sim")),
+                         tabPanel("peptide pairwise sequence BLASTP",
+                                  dataTableOutput("pairwise_blastp")),
+                         tabPanel("peptide pairwise antibody reactivity correlation",
+                                  dataTableOutput("pairwise_cor")),
+                         tabPanel("peptide pairwise jaccard index",
+                                  dataTableOutput("pairwise_jaccard")),
+                         tabPanel("peptide pairwise calculation",
+                                  dataTableOutput("pairwise_all")),
                          tabPanel("sequence similarity", 
                                   plotlyOutput("plotly_seq")),
                          tabPanel("antibody reactivity correlation",
@@ -707,6 +734,9 @@ server <- function(input, output, session) {
 
   output$n_node <- renderUI({
     
+    req(peptide_info_filtered())
+    req(ab_reactivity_filtered())
+    
     n_pep <- nrow(peptide_info_filtered())
     n_sam <- ncol(ab_reactivity_filtered()) - 1
     
@@ -731,13 +761,15 @@ server <- function(input, output, session) {
   
   
   # e) calculate the sequence similarity and reactivity correlation -----------------------------
-  peptide_seq_similarity <- eventReactive(input$calculate, {
+  peptide_pairwise <- eventReactive(input$calculate, {
     
-    peptide_id_list <- peptide_info_filtered$u_pep_id
+    withProgress(message = "calculating", value = 0, { 
+    
+    peptide_id_list <- peptide_info_filtered()$u_pep_id
     
     ### sequence similarity analysis using the "virlink" package
     peptide_seq_sim <- peptide_pairwise_alignment(
-      peptides        = peptide_info_filtered,
+      peptides        = peptide_info_filtered(),
       id_col          = "u_pep_id",
       seq_col         = "pep_aa",
       sub_matrix      = "BLOSUM62", 
@@ -768,8 +800,14 @@ server <- function(input, output, session) {
       as_tibble()
     
     
+    ### sequence similarity analysis using BLAST
+    peptide_blastp <- blastp_dm(pep_dt     = peptide_info_filtered(), 
+                                fasta_dir  = input$local_dir, 
+                                other_info = TRUE)
+    
+    
     ### antibody reactivity correlation
-    ab_reactivity_formatted <- ab_reactivity_filtered %>% 
+    ab_reactivity_formatted <- ab_reactivity_filtered() %>% 
       column_to_rownames(var = "u_pep_id") %>% 
       t() %>% 
       as.data.frame()
@@ -795,13 +833,14 @@ server <- function(input, output, session) {
     
     
     ### record the results
-    pairwise_calculation <- list(seq = peptide_seq_sim,
-                                 cor = ab_cor,
-                                 jac = ab_jaccard)
+    pairwise_calculation <- list(seq    = peptide_seq_sim,
+                                 blastp = peptide_blastp, 
+                                 cor    = ab_cor,
+                                 jac    = ab_jaccard)
     
     
     ### check if the peptides in the peptide metadata and the antibody reactivity are the same
-    same_peptides <- setequal(peptide_info_filtered$u_pep_id, ab_reactivity_filtered$u_pep_id)
+    same_peptides <- setequal(peptide_info_filtered()$u_pep_id, ab_reactivity_filtered()$u_pep_id)
     pairwise_calculation$same <- same_peptides
     
     
@@ -809,8 +848,8 @@ server <- function(input, output, session) {
     
     # if the peptides are different between the two inputs
     if(!same_peptides){
-      peptide_id_list <- peptide_id_list[peptide_id_list %in% intersect(peptide_info_filtered$u_pep_id, 
-                                                                        ab_reactivity_filtered$u_pep_id)]
+      peptide_id_list <- peptide_id_list[peptide_id_list %in% intersect(peptide_info_filtered()$u_pep_id, 
+                                                                        ab_reactivity_filtered()$u_pep_id)]
       
       peptide_seq_sim <- peptide_seq_sim %>% 
         filter(id1 %in% peptide_id_list, id2 %in% peptide_id_list)
@@ -856,14 +895,33 @@ server <- function(input, output, session) {
     
     ### combine the three measurement
     pairwise_calculation$all <- peptide_seq_sim %>% 
+      dplyr::left_join(peptide_blastp, by = intersect(colnames(peptide_seq_sim), colnames(peptide_blastp))) %>% 
       dplyr::inner_join(ab_cor, by = c("id1", "id2")) %>% 
       dplyr::inner_join(ab_jaccard, by = c("id1", "id2"))
+    
+    })
     
     
     
     return(pairwise_calculation)
     
   })
+  
+  
+  output$pairwise_seq_sim <- renderDataTable(peptide_pairwise()$seq)
+  
+  output$pairwise_blastp  <- renderDataTable(peptide_pairwise()$blastp)
+  
+  output$pairwise_cor     <- renderDataTable(peptide_pairwise()$cor)
+  
+  output$pairwise_jaccard <- renderDataTable(peptide_pairwise()$jac)
+  
+  output$pairwise_all     <- renderDataTable(peptide_pairwise()$all)
+  
+  
+
+  # f) network construction ---------------------------------------------------------------------
+
   
   
   
