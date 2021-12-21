@@ -21,7 +21,7 @@
 # a) packages -------------------------------------------------------------
 
 # install the packages below if not already installed
-load_lib <- c("shiny", "shinythemes", 
+load_lib <- c("shiny", "shinythemes", "shinyWidgets", 
               "tidyverse", "here", "devtools", "tools", 
               "rBLAST", "seqinr", 
               "igraph", "ggnetwork", "intergraph", 
@@ -63,6 +63,7 @@ taxa_protein <- VRC_peptide_info %>%
 
 blastp_dm <- function(pep_dt, 
                       fasta_dir = "C:/Users/siyang_xia/R/",
+                      blastp_arg = "", 
                       other_info = TRUE){
   
   # write the sequences to FASTA files
@@ -85,7 +86,7 @@ blastp_dm <- function(pep_dt,
   
   # blast calculation
   predp <- predict(dbp, seqp,
-                   BLAST_args = "-evalue .1 -max_hsps 1 -soft_masking false -word_size 7 -max_target_seqs 100000",
+                   BLAST_args = blastp_arg,
                    custom_format = "qseqid sseqid pident length evalue bitscore positive gaps ppos")
   
   
@@ -291,11 +292,14 @@ ui <- fluidPage(
              windowTitle = "VirScan peptide network visualization tool"
   ),
   
-  # sidebar with a slider input for number of bins 
+  
+
+  ## a) input panels ------------------------------------------------------------------------------
+
   fluidRow(
     
-    # input
-    column(2, 
+    ### upload and select peptides and sample Ab reactivity profiles -----
+    column(3, 
            
       # allow the user to upload a file that contains peptide information
       fileInput(inputId = "peptide_upload",
@@ -308,8 +312,6 @@ ui <- fluidPage(
       
       uiOutput("filter1"), 
       
-      br(),
-      hr(),
       br(),
             
       # allow the user to upload a file that contains PhIP-Seq antibody reactivity profile
@@ -342,40 +344,71 @@ ui <- fluidPage(
                   step = 0.01, 
                   ticks = FALSE, 
                   dragRange = TRUE),
-      
-      br(),
-      hr(),
-      br(),
-      
-      # seed for determine the coordinate of vertices
-      numericInput(inputId = "seed", 
-                   label = "Seed", 
-                   min = 1, 
-                   max = 1000, 
-                   value = 111, 
-                   step = 1),
-      
-      textInput(inputId = "local_dir",
-                label = "local directory",
-                value = "C:/Users/siyang_xia/R/", 
-                placeholder = "local directory (no space)"),
-      
-      br(),
-      hr(),
-      br(),
-      
-      actionButton(inputId = "go", label = "Filter peptides"),
-      
-      br(),
-      hr(),
-      br(),
-      
-      actionButton(inputId = "calculate", label = "Compute")
+
       
     ),
     
-    # filtering the network before visualization
-    column(2, 
+    
+    ### parameters for computing peptide pairwise alignments and correlations -----
+    column(3,
+      
+      # input for the BLASTP alignment
+      textInput(inputId = "local_dir",
+                label = "Local directory for temporary files",
+                value = "C:/Users/siyang_xia/R/", 
+                placeholder = "local directory (do not allow space)"),
+      
+      textInput(inputId = "blastp_arg",
+                label = "Argument for BLASTP",
+                value = "-evalue 100 -max_hsps 1 -soft_masking false -word_size 7 -max_target_seqs 100000", 
+                placeholder = "in the format of -arg1 value1 -arg2 value2"),
+      
+      br(),
+
+      # input for the pairwiseAlignment with BiocGenerics (implemented with virlink)
+      selectInput(inputId = "align_type", 
+                  label = "Type of alignment",
+                  choices = c("global", "local", "overlap", "global-local", "local-global"),
+                  multiple = FALSE, 
+                  selectize = FALSE,
+                  selected = "local"),
+      
+      selectInput(inputId = "sub_matrix", 
+                  label = "Amino acid substitution matrix",
+                  choices = c("BLOSUM45", "BLOSUM50", "BLOSUM62", "BLOSUM80", "BLOSUM100",
+                              "PAM30", "PAM40", "PAM70", "PAM120", "PAM250"),
+                  multiple = FALSE, 
+                  selectize = FALSE,
+                  selected = "BLOSUM62"),
+      
+      numericInput(inputId = "gap_opening", 
+                   label = "Panelty for gap opening", 
+                   min = 0, 
+                   max = 100, 
+                   value = 10.0, 
+                   step = 0.1),
+
+      numericInput(inputId = "gap_extension", 
+                   label = "Panelty for gap extension", 
+                   min = 0, 
+                   max = 100, 
+                   value = 4.0, 
+                   step = 0.1),
+      
+    ),
+    
+    
+    ### filtering the pairwise calculation results -----
+    column(3, 
+      
+      numericRangeInput(inputId   = "evalue", 
+                        label     = "E-value ranges",
+                        value     = c(0, 100),
+                        separator = " - ",
+                        min       = 0,
+                        max       = 10000),
+      
+      br(),
            
       sliderInput(inputId = "nchar",
                   label = "Length of alignment",
@@ -387,7 +420,7 @@ ui <- fluidPage(
                   dragRange = TRUE),
       
       sliderInput(inputId = "matches",
-                  label = "# of matched amino acids",
+                  label = "Number of matched amino acids",
                   min = 1,
                   max = 56,
                   value = c(5, 56),
@@ -396,7 +429,7 @@ ui <- fluidPage(
                   dragRange = TRUE),
       
       sliderInput(inputId = "match_seq_length",
-                  label = "Continuous matches",
+                  label = "Length of continuous matches",
                   min = 1,
                   max = 56,
                   value = c(3, 56), 
@@ -413,6 +446,8 @@ ui <- fluidPage(
                   ticks = FALSE, 
                   dragRange = TRUE),
       
+      br(),
+      
       sliderInput(inputId = "cor",
                   label = "Ab reactivity correlation",
                   min = -1,
@@ -423,7 +458,7 @@ ui <- fluidPage(
                   dragRange = TRUE),
       
       sliderInput(inputId = "jaccard",
-                  label = "Ab hit jaccard index",
+                  label = "Ab enrichment jaccard index",
                   min = 0,
                   max = 1,
                   value = c(0, 1), 
@@ -431,84 +466,105 @@ ui <- fluidPage(
                   ticks = FALSE, 
                   dragRange = TRUE),
       
-      selectInput(inputId = "same_family", 
-                  label = "Same family", 
-                  choices = c("yes", "no", "both"), 
-                  selected = "both", 
-                  multiple = FALSE),
-      
-      selectInput(inputId = "same_genus", 
-                  label = "Same genus", 
-                  choices = c("yes", "no", "both"), 
-                  selected = "both", 
-                  multiple = FALSE),
-      
-      selectInput(inputId = "same_species", 
-                  label = "Same species", 
-                  choices = c("yes", "no", "both"), 
-                  selected = "both", 
-                  multiple = FALSE),
-      
-      selectInput(inputId = "same_organism", 
-                  label = "Same organism", 
-                  choices = c("yes", "no", "both"), 
-                  selected = "both", 
-                  multiple = FALSE),
-      
-      selectInput(inputId = "tiling", 
-                  label = "Tiling epitopes", 
-                  choices = c("yes", "no", "both"), 
-                  selected = "both", 
-                  multiple = FALSE),
-      
       br(),
       
-      actionButton(inputId = "filter", label = "Filter")
+      # seed for determine the coordinate of vertices
+      numericInput(inputId = "seed", 
+                   label = "Seed", 
+                   min = 1, 
+                   max = 1000, 
+                   value = 111, 
+                   step = 1),
+      
     ),
     
-    # Output: interactive network by plotly
-    column(8,
-           fluidRow(
+    
+    ### plotting -----
+    column(3, 
+      
+      # seed for determine the coordinate of vertices
+      numericInput(inputId = "seed", 
+                   label = "Seed", 
+                   min = 1, 
+                   max = 1000, 
+                   value = 111, 
+                   step = 1),
+      
+      selectInput(inputId = "color_var", 
+                  label = "Color of nodes", 
+                  choices = c("family", "genus", "species", "organism"), 
+                  selected = "family",
+                  multiple = FALSE)),
+    
+    ),
+    
+  
+  fluidRow(
+    
+    column(3, offset = 1.5,
+           actionButton(inputId = "load", label = "Submit")),
+    
+    column(3, offset = 1.5, 
+           actionButton(inputId = "calculate", label = "Compute")),
+    
+    column(3, offset = 1.5,
+           actionButton(inputId = "filter", label = "Filter")),
+    
+    column(3, offset = 1.5,
+           actionButton(inputId = "plot", label = "Plot"))
+  ),
+  
+  hr(),
 
-             column(10, 
-                    htmlOutput(outputId = "n_node")), 
-             
-             column(2, 
-                    selectInput(inputId = "color_var", 
-                                label = "Color of nodes", 
-                                choices = c("family", "genus", "species", "organism"), 
-                                selected = "family",
-                                multiple = FALSE)),
-             
-             br(),
-             
-             tabsetPanel(type = "tabs",
-                         tabPanel("peptide metadata",
-                                  dataTableOutput("peptide_info_table")),
-                         tabPanel("antibody reactivity",
-                                  dataTableOutput("ab_reactivity_table")),
-                         tabPanel("peptide pairwise sequence similarity",
-                                  dataTableOutput("pairwise_seq_sim")),
-                         tabPanel("peptide pairwise sequence BLASTP",
-                                  dataTableOutput("pairwise_blastp")),
-                         tabPanel("peptide pairwise antibody reactivity correlation",
-                                  dataTableOutput("pairwise_cor")),
-                         tabPanel("peptide pairwise jaccard index",
-                                  dataTableOutput("pairwise_jaccard")),
-                         tabPanel("peptide pairwise calculation",
-                                  dataTableOutput("pairwise_all")),
-                         tabPanel("sequence similarity", 
-                                  plotlyOutput("plotly_seq")),
-                         tabPanel("antibody reactivity correlation",
-                                  plotlyOutput("plotly_cor")),
-                         tabPanel("antibody hit jaccard index",
-                                  plotlyOutput("plotly_jaccard"))
-             )
-             
-           )
+  br(),
+  
+
+  
+  # b) Output panels ----------------------------------------------------------------------------
+  
+  htmlOutput(outputId = "n_node"),
+  
+  br(),
+  br(), 
+  
+  fluidRow(
+    
+    tabsetPanel(type = "tabs",
+                tabPanel("peptide metadata",
+                         dataTableOutput("peptide_info_table")),
+                
+                tabPanel("antibody reactivity",
+                         dataTableOutput("ab_reactivity_table")),
+                
+                tabPanel("peptide pairwise sequence similarity",
+                         dataTableOutput("pairwise_seq_sim")),
+                
+                tabPanel("peptide pairwise sequence BLASTP",
+                         dataTableOutput("pairwise_blastp")),
+                
+                tabPanel("peptide pairwise antibody reactivity correlation",
+                         dataTableOutput("pairwise_cor")),
+                
+                tabPanel("peptide pairwise jaccard index",
+                         dataTableOutput("pairwise_jaccard")),
+                
+                tabPanel("peptide pairwise calculation",
+                         dataTableOutput("pairwise_all")),
+                
+                tabPanel("sequence similarity", 
+                         plotlyOutput("plotly_seq")),
+                
+                tabPanel("antibody reactivity correlation",
+                         plotlyOutput("plotly_cor")),
+                
+                tabPanel("antibody hit jaccard index",
+                         plotlyOutput("plotly_jaccard"))
     )
+    
   )
+  
 )
+
 
 
 
@@ -662,7 +718,7 @@ server <- function(input, output, session) {
   # c) filter the peptides and samples ----------------------------------------------------------
 
   ### filter the peptide information based on the selected variables
-  peptide_info_filtered <- eventReactive(input$go, {
+  peptide_info_filtered <- eventReactive(input$load, {
     
     # filter peptide metadata according to the selected variables
     var_list <- input$filter_var
@@ -715,7 +771,7 @@ server <- function(input, output, session) {
   
   
   ### filter the peptide information based on the selected variables
-  ab_reactivity_filtered <- eventReactive(input$go, {
+  ab_reactivity_filtered <- eventReactive(input$load, {
     
     sample_list <- input$select_sample
     if("all" %in% sample_list | is.null(sample_list)) sample_list <- names(ab_data())[-1]
@@ -751,6 +807,8 @@ server <- function(input, output, session) {
                              sep = '<br/>')
     }
     
+    print("lalala")
+    
     return(HTML(text_to_print))
   })
   
@@ -761,21 +819,23 @@ server <- function(input, output, session) {
   
   
   # e) calculate the sequence similarity and reactivity correlation -----------------------------
-  peptide_pairwise <- eventReactive(input$calculate, {
+  peptide_pairwise <- observeEvent(input$calculate, {
     
     withProgress(message = "calculating", value = 0, { 
     
     peptide_id_list <- peptide_info_filtered()$u_pep_id
+    
+    setProgress(value = 0.05, message = "start computing")
     
     ### sequence similarity analysis using the "virlink" package
     peptide_seq_sim <- peptide_pairwise_alignment(
       peptides        = peptide_info_filtered(),
       id_col          = "u_pep_id",
       seq_col         = "pep_aa",
-      sub_matrix      = "BLOSUM62", 
-      gap_opening     = 10,      # default
-      gap_extension   = 4,       # default
-      align_type      = "local", # default
+      sub_matrix      = input$sub_matrix, 
+      gap_opening     = input$gap_opening,
+      gap_extension   = input$gap_extension,
+      align_type      = input$align_type,
       self_comparison = TRUE,    # default
       full_align      = FALSE,   # default
       other_info      = TRUE,    # default
@@ -799,11 +859,17 @@ server <- function(input, output, session) {
       arrange(id1, id2) %>% 
       as_tibble()
     
+    setProgress(value = 0.25, message = "finished peptide alignment")
     
     ### sequence similarity analysis using BLAST
     peptide_blastp <- blastp_dm(pep_dt     = peptide_info_filtered(), 
                                 fasta_dir  = input$local_dir, 
+                                blastp_arg = input$blastp_arg,
                                 other_info = TRUE)
+    
+    peptide_blastp <- peptide_blastp %>% filter(id1 != id2)
+    
+    setProgress(value = 0.5, message = "finished BLASTP")
     
     
     ### antibody reactivity correlation
@@ -819,6 +885,8 @@ server <- function(input, output, session) {
       cor_method    = "pearson",
       output_str    = "tibble")
     
+    setProgress(value = 0.7, message = "finished Ab correlation calculation")
+    
     
     ### antibody reactivity jaccard index
     ab_hit_formatted <- as.data.frame((ab_reactivity_formatted > input$hit_thres) * 1)
@@ -830,6 +898,8 @@ server <- function(input, output, session) {
       occ_method      = "jaccard",
       hit_threshold   = 1,
       output_str      = "tibble")
+    
+    setProgress(value = 0.9, message = "finished Ab jaccard calculation")
     
     
     ### record the results
@@ -895,13 +965,12 @@ server <- function(input, output, session) {
     
     ### combine the three measurement
     pairwise_calculation$all <- peptide_seq_sim %>% 
-      dplyr::left_join(peptide_blastp, by = intersect(colnames(peptide_seq_sim), colnames(peptide_blastp))) %>% 
-      dplyr::inner_join(ab_cor, by = c("id1", "id2")) %>% 
-      dplyr::inner_join(ab_jaccard, by = c("id1", "id2"))
+      dplyr::left_join(peptide_blastp, 
+                       by = intersect(colnames(peptide_seq_sim), colnames(peptide_blastp))) %>% 
+      dplyr::full_join(ab_cor, by = c("id1", "id2")) %>% 
+      dplyr::full_join(ab_jaccard, by = c("id1", "id2"))
     
     })
-    
-    
     
     return(pairwise_calculation)
     
@@ -919,30 +988,120 @@ server <- function(input, output, session) {
   output$pairwise_all     <- renderDataTable(peptide_pairwise()$all)
   
   
+  
+
+  # unfinished ----------------------------------------------------------------------------------
+
+  
+
+  # f) further filtering the pairwise calculations ----------------------------------------------
+  peptide_pairwise <- eventReactive(input$filter, {
+    
+    req(pairwise_calculation())
+    
+    net_fig_df <- network_dt() %>% 
+      dplyr::filter((nchar >= input$nchar[1] & 
+                       nchar <= input$nchar[2]) | 
+                      is.na(nchar)) %>% 
+      dplyr::filter((matches >= input$matches[1] & 
+                       matches <= input$matches[2]) | 
+                      is.na(matches)) %>% 
+      dplyr::filter((match_seq_length >= input$match_seq_length[1] &
+                       match_seq_length <= input$match_seq_length[2]) | 
+                      is.na(match_seq_length)) %>% 
+      dplyr::filter((sim_score >= input$sim_score[1] & 
+                       sim_score <= input$sim_score[2]) | 
+                      is.na(sim_score)) %>% 
+      dplyr::filter((cor >= input$cor[1] & 
+                       cor <= input$cor[2]) | 
+                      is.na(cor)) %>% 
+      dplyr::filter((jaccard >= input$jaccard[1] & 
+                       jaccard <= input$jaccard[2]) | 
+                      is.na(jaccard))
+    
+    # filter epitope pairs by their virus family
+    if(input$same_family == "yes"){
+      net_fig_df <- net_fig_df %>% dplyr::filter(same_family == TRUE | is.na(same_family))
+    }else if(input$same_family == "no"){
+      net_fig_df <- net_fig_df %>% dplyr::filter(same_family == FALSE | is.na(same_family))
+    }
+    
+    # filter epitope pairs by their virus genus
+    if(input$same_genus == "yes"){
+      net_fig_df <- net_fig_df %>% dplyr::filter(same_genus == TRUE | is.na(same_genus))
+    }else if(input$same_genus == "no"){
+      net_fig_df <- net_fig_df %>% dplyr::filter(same_genus == FALSE | is.na(same_genus))
+    }
+    
+    # filter epitope pairs by their virus species
+    if(input$same_species == "yes"){
+      net_fig_df <- net_fig_df %>% dplyr::filter(same_species == TRUE | is.na(same_species))
+    }else if(input$same_species == "no"){
+      net_fig_df <- net_fig_df %>% dplyr::filter(same_species == FALSE | is.na(same_species))
+    }
+    
+    # filter epitope pairs by their virus organism
+    if(input$same_organism == "yes"){
+      net_fig_df <- net_fig_df %>% dplyr::filter(same_organism == TRUE | is.na(same_organism))
+    }else if(input$same_organism == "no"){
+      net_fig_df <- net_fig_df %>% dplyr::filter(same_organism == FALSE | is.na(same_organism))
+    }
+    
+    # filter tiled epitopes
+    if(input$tiling == "yes"){
+      net_fig_df <- net_fig_df %>% dplyr::filter(tiling == TRUE | is.na(tiling))
+    }else if(input$tiling == "no"){
+      net_fig_df <- net_fig_df %>% dplyr::filter(tiling == FALSE | is.na(tiling))
+    }
+    
+    # # A message if the number of nodes and edges are too many
+    # session$sendCustomMessage(type = 'testmessage',
+    #                           message = 'Thank you for clicking')
+    
+    return(net_fig_df)
+  })
+  
+  
+
+  
 
   # f) network construction ---------------------------------------------------------------------
 
-  
-  
-  
-  
-  
-  # # variables selected
-  # var_list <- reactive({     print(input); return(input$filter_var) })
-  # 
-  # 
-  # 
-  # # get all unique values for the selected filtering variables
-  # peptide_info_options <- reactive({
-  #   
-  #   peptide_info_opt <- peptide_info_dt() %>% 
-  #     dplyr::select(all_of(var_list())) %>% 
-  #     distinct()
-  #   
-  #   print(var_list())
-  #   print(input)
-  # 
-  # })
+  network_dt <- reactive({
+
+    # vertices
+    vertex_d <- peptide_info_filtered()
+    
+    # edges
+    edge_d <- epitope_pair %>%
+      dplyr::filter(subject_id %in% vertex_d$id,
+                    pattern_id %in% vertex_d$id)
+
+      # construct an igraph object
+      net <- igraph::graph_from_data_frame(d = edge_d,
+                                           vertices = vertex_d,
+                                           directed = FALSE)
+
+      # weight to group species and genus together
+      weight_same_family <- 1
+      weight_same_genus <- 1
+      weight_same_species <- 1
+
+      # weight of edges
+      E(net)$weight <- E(net)$sim_score +
+        E(net)$same_family  * weight_same_family +
+        E(net)$same_genus   * weight_same_genus +
+        E(net)$same_species * weight_same_species
+
+      # fortify the igraph to a data frame suitable for ggplot2
+      set.seed(input$seed)
+      suppressWarnings({
+        net_fig_df <- ggnetwork::ggnetwork(x = net,
+                                           layout = igraph::with_fr())
+      })
+
+      return(net_fig_df)
+    })
 
 
   # observeEvent(input$filter_var,
@@ -1072,7 +1231,7 @@ server <- function(input, output, session) {
 
   
   # # build the network
-  # network_dt <- eventReactive(input$go, {
+  # network_dt <- eventReactive(input$load, {
   #   
   #   var_list <- input$filter_var
   #   
