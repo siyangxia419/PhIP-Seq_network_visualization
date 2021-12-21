@@ -807,7 +807,6 @@ server <- function(input, output, session) {
                              sep = '<br/>')
     }
     
-    print("lalala")
     
     return(HTML(text_to_print))
   })
@@ -819,7 +818,9 @@ server <- function(input, output, session) {
   
   
   # e) calculate the sequence similarity and reactivity correlation -----------------------------
-  peptide_pairwise <- observeEvent(input$calculate, {
+  peptide_pairwise <- reactiveValues()
+  
+  observeEvent(input$calculate, {
     
     withProgress(message = "calculating", value = 0, { 
     
@@ -859,6 +860,8 @@ server <- function(input, output, session) {
       arrange(id1, id2) %>% 
       as_tibble()
     
+    peptide_pairwise$seq <- peptide_seq_sim
+    
     setProgress(value = 0.25, message = "finished peptide alignment")
     
     ### sequence similarity analysis using BLAST
@@ -868,6 +871,8 @@ server <- function(input, output, session) {
                                 other_info = TRUE)
     
     peptide_blastp <- peptide_blastp %>% filter(id1 != id2)
+    
+    peptide_pairwise$blastp <- peptide_blastp
     
     setProgress(value = 0.5, message = "finished BLASTP")
     
@@ -885,6 +890,8 @@ server <- function(input, output, session) {
       cor_method    = "pearson",
       output_str    = "tibble")
     
+    peptide_pairwise$cor <- ab_cor
+    
     setProgress(value = 0.7, message = "finished Ab correlation calculation")
     
     
@@ -899,19 +906,15 @@ server <- function(input, output, session) {
       hit_threshold   = 1,
       output_str      = "tibble")
     
+    peptide_pairwise$jac <- ab_jaccard
+    
     setProgress(value = 0.9, message = "finished Ab jaccard calculation")
-    
-    
-    ### record the results
-    pairwise_calculation <- list(seq    = peptide_seq_sim,
-                                 blastp = peptide_blastp, 
-                                 cor    = ab_cor,
-                                 jac    = ab_jaccard)
+
     
     
     ### check if the peptides in the peptide metadata and the antibody reactivity are the same
     same_peptides <- setequal(peptide_info_filtered()$u_pep_id, ab_reactivity_filtered()$u_pep_id)
-    pairwise_calculation$same <- same_peptides
+    peptide_pairwise$same <- same_peptides
     
     
     ### match the id1 and id2 between sequence alignment, ab reactivity correlation and jaccard index
@@ -964,7 +967,7 @@ server <- function(input, output, session) {
     
     
     ### combine the three measurement
-    pairwise_calculation$all <- peptide_seq_sim %>% 
+    peptide_pairwise$all <- peptide_seq_sim %>% 
       dplyr::left_join(peptide_blastp, 
                        by = intersect(colnames(peptide_seq_sim), colnames(peptide_blastp))) %>% 
       dplyr::full_join(ab_cor, by = c("id1", "id2")) %>% 
@@ -972,95 +975,76 @@ server <- function(input, output, session) {
     
     })
     
-    return(pairwise_calculation)
     
   })
   
-  
-  output$pairwise_seq_sim <- renderDataTable(peptide_pairwise()$seq)
-  
-  output$pairwise_blastp  <- renderDataTable(peptide_pairwise()$blastp)
-  
-  output$pairwise_cor     <- renderDataTable(peptide_pairwise()$cor)
-  
-  output$pairwise_jaccard <- renderDataTable(peptide_pairwise()$jac)
-  
-  output$pairwise_all     <- renderDataTable(peptide_pairwise()$all)
-  
-  
-  
 
-  # unfinished ----------------------------------------------------------------------------------
-
-  
 
   # f) further filtering the pairwise calculations ----------------------------------------------
-  peptide_pairwise <- eventReactive(input$filter, {
+  
+  pairwise_filter <- reactiveValues()
+  
+  observeEvent(input$filter, {
     
-    req(pairwise_calculation())
+    req(peptide_pairwise)
     
-    net_fig_df <- network_dt() %>% 
-      dplyr::filter((nchar >= input$nchar[1] & 
-                       nchar <= input$nchar[2]) | 
-                      is.na(nchar)) %>% 
-      dplyr::filter((matches >= input$matches[1] & 
-                       matches <= input$matches[2]) | 
-                      is.na(matches)) %>% 
-      dplyr::filter((match_seq_length >= input$match_seq_length[1] &
-                       match_seq_length <= input$match_seq_length[2]) | 
-                      is.na(match_seq_length)) %>% 
-      dplyr::filter((sim_score >= input$sim_score[1] & 
-                       sim_score <= input$sim_score[2]) | 
-                      is.na(sim_score)) %>% 
-      dplyr::filter((cor >= input$cor[1] & 
-                       cor <= input$cor[2]) | 
-                      is.na(cor)) %>% 
-      dplyr::filter((jaccard >= input$jaccard[1] & 
-                       jaccard <= input$jaccard[2]) | 
-                      is.na(jaccard))
+    pairwise_filter$same <- peptide_pairwise$same
     
-    # filter epitope pairs by their virus family
-    if(input$same_family == "yes"){
-      net_fig_df <- net_fig_df %>% dplyr::filter(same_family == TRUE | is.na(same_family))
-    }else if(input$same_family == "no"){
-      net_fig_df <- net_fig_df %>% dplyr::filter(same_family == FALSE | is.na(same_family))
-    }
+    # filter the BLASTP results
+    pairwise_filter$blastp <- peptide_pairwise$blastp %>% 
+      filter(between(evalue, input$evalue[1], input$evalue[2]))
     
-    # filter epitope pairs by their virus genus
-    if(input$same_genus == "yes"){
-      net_fig_df <- net_fig_df %>% dplyr::filter(same_genus == TRUE | is.na(same_genus))
-    }else if(input$same_genus == "no"){
-      net_fig_df <- net_fig_df %>% dplyr::filter(same_genus == FALSE | is.na(same_genus))
-    }
+    # filter the sequence alignment results
+    pairwise_filter$seq <- peptide_pairwise$seq %>% 
+      filter(between(nchar, input$nchar[1], input$nchar[2])) %>% 
+      filter(between(matches, input$matches[1], input$matches[2])) %>% 
+      filter(between(match_seq_length, input$match_seq_length[1], input$match_seq_length[2])) %>%
+      filter(between(sim_score, input$sim_score[1], input$sim_score[2]))
     
-    # filter epitope pairs by their virus species
-    if(input$same_species == "yes"){
-      net_fig_df <- net_fig_df %>% dplyr::filter(same_species == TRUE | is.na(same_species))
-    }else if(input$same_species == "no"){
-      net_fig_df <- net_fig_df %>% dplyr::filter(same_species == FALSE | is.na(same_species))
-    }
+    # filter the Ab correlation
+    pairwise_filter$cor <- peptide_pairwise$cor %>% 
+      filter(between(cor, input$cor[1], input$cor[2]))
+      
+    # filter the Ab jaccard index
+    pairwise_filter$jac <- peptide_pairwise$jac %>% 
+      filter(between(jaccard, input$jaccard[1], input$jaccard[2]))
     
-    # filter epitope pairs by their virus organism
-    if(input$same_organism == "yes"){
-      net_fig_df <- net_fig_df %>% dplyr::filter(same_organism == TRUE | is.na(same_organism))
-    }else if(input$same_organism == "no"){
-      net_fig_df <- net_fig_df %>% dplyr::filter(same_organism == FALSE | is.na(same_organism))
-    }
+    # combine the results
+    pairwise_filter$all <- pairwise_filter$seq %>% 
+      left_join(pairwise_filter$blastp, 
+                by = intersect(colnames(pairwise_filter$seq),
+                               colnames(pairwise_filter$blastp))) %>% 
+      full_join(pairwise_filter$cor, by = c("id1", "id2")) %>% 
+      full_join(pairwise_filter$jac, by = c("id1", "id2"))
     
-    # filter tiled epitopes
-    if(input$tiling == "yes"){
-      net_fig_df <- net_fig_df %>% dplyr::filter(tiling == TRUE | is.na(tiling))
-    }else if(input$tiling == "no"){
-      net_fig_df <- net_fig_df %>% dplyr::filter(tiling == FALSE | is.na(tiling))
-    }
-    
-    # # A message if the number of nodes and edges are too many
-    # session$sendCustomMessage(type = 'testmessage',
-    #                           message = 'Thank you for clicking')
-    
-    return(net_fig_df)
   })
   
+  
+  # show the pairwise calculation results after filtering
+  output$pairwise_seq_sim  <- renderDataTable({
+    req(pairwise_filter)
+    pairwise_filter$seq
+  })
+  
+  output$pairwise_blastp  <- renderDataTable({
+    req(pairwise_filter)
+    pairwise_filter$blastp
+  })
+  
+  output$pairwise_cor     <- renderDataTable({
+    req(pairwise_filter)
+    pairwise_filter$cor
+  })
+  
+  output$pairwise_jaccard <- renderDataTable({
+    req(pairwise_filter)
+    pairwise_filter$jac
+  })
+  
+  output$pairwise_all     <- renderDataTable({
+    req(pairwise_filter)
+    pairwise_filter$all
+  })
   
 
   
