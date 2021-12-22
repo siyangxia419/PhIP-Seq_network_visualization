@@ -10,7 +10,7 @@
 # Daniel Monaco
 # H. Benjamin Larman
 #
-# Version: 2021-12-16
+# Version: 2021-12-22
 ###
 
 
@@ -794,15 +794,26 @@ server <- function(input, output, session) {
     req(ab_reactivity_filtered())
     
     n_pep <- nrow(peptide_info_filtered())
+    n_pep2 <- nrow(ab_reactivity_filtered())
     n_sam <- ncol(ab_reactivity_filtered()) - 1
     
-    text_to_print <- paste(paste("Number of peptides:", n_pep),
-                           paste("Number of samples:", n_sam),
-                           sep = '<br/>')
+    same_peptides <- setequal(peptide_info_filtered()$u_pep_id, ab_reactivity_filtered()$u_pep_id)
     
-    if(n_pep > 50){
+    if(n_pep == n_pep2 & same_peptides){
+      text_to_print <- paste(paste("Number of peptides:", n_pep),
+                             paste("Number of samples:", n_sam),
+                             sep = '<br/>')
+    }else{
+      text_to_print <- paste(paste("Number of peptides with metadata:", n_pep),
+                             paste("Number of peptides with Ab reactivity:", n_pep2), 
+                             paste("Number of samples:", n_sam),
+                             "Warning: Peptides in the metadata file and Ab reactivity file do not match!",
+                             sep = '<br/>')
+    }
+    
+    if(n_pep > 50 | n_pep2 > 50){
       text_to_print <- paste(text_to_print, 
-                             "Warning: more than 100 peptides in the dataset.
+                             "Warning: more than 50 peptides in the dataset.
                              Calculation may take a long time and the network may be too dense.",
                              sep = '<br/>')
     }
@@ -975,7 +986,6 @@ server <- function(input, output, session) {
     
     })
     
-    
   })
   
 
@@ -1049,43 +1059,95 @@ server <- function(input, output, session) {
 
   
 
-  # f) network construction ---------------------------------------------------------------------
+  # g) network construction ---------------------------------------------------------------------
 
   network_dt <- reactive({
 
-    # vertices
-    vertex_d <- peptide_info_filtered()
+    # # weight to group species and genus together
+    # weight_same_family <- 1
+    # weight_same_genus <- 1
+    # weight_same_species <- 1
     
-    # edges
-    edge_d <- epitope_pair %>%
-      dplyr::filter(subject_id %in% vertex_d$id,
-                    pattern_id %in% vertex_d$id)
+    net_vertices <- peptide_info_filtered()
+    
+    ## sequence similarity network -----
 
-      # construct an igraph object
-      net <- igraph::graph_from_data_frame(d = edge_d,
-                                           vertices = vertex_d,
-                                           directed = FALSE)
+    # construct an igraph object
+    seq_sim_net <- igraph::graph_from_data_frame(d = peptide_pairwise$seq,
+                                                 vertices = peptide_info_filtered(),
+                                                 directed = FALSE)
 
-      # weight to group species and genus together
-      weight_same_family <- 1
-      weight_same_genus <- 1
-      weight_same_species <- 1
+    # # weight of edges
+    # E(seq_sim_net)$weight <- E(seq_sim_net)$sim_score +
+    #   E(seq_sim_net)$same_family  * weight_same_family +
+    #   E(seq_sim_net)$same_genus   * weight_same_genus +
+    #   E(seq_sim_net)$same_species * weight_same_species
 
-      # weight of edges
-      E(net)$weight <- E(net)$sim_score +
-        E(net)$same_family  * weight_same_family +
-        E(net)$same_genus   * weight_same_genus +
-        E(net)$same_species * weight_same_species
-
-      # fortify the igraph to a data frame suitable for ggplot2
-      set.seed(input$seed)
-      suppressWarnings({
-        net_fig_df <- ggnetwork::ggnetwork(x = net,
-                                           layout = igraph::with_fr())
-      })
-
-      return(net_fig_df)
+    # fortify the igraph to a data frame suitable for ggplot2
+    set.seed(input$seed)
+    suppressWarnings({
+      seq_sim_net_df <- ggnetwork::ggnetwork(x = seq_sim_net,
+                                             layout = igraph::with_fr())
     })
+    
+    # filter the edges
+    seq_sim_net_df <- seq_sim_net_df %>% 
+      filter(between(nchar, input$nchar[1], input$nchar[2])) %>% 
+      filter(between(matches, input$matches[1], input$matches[2])) %>% 
+      filter(between(match_seq_length, input$match_seq_length[1], input$match_seq_length[2])) %>%
+      filter(between(sim_score, input$sim_score[1], input$sim_score[2]))
+    
+    
+    
+    ## BLASTP network -----
+    
+    # all pairs of peptides
+    blastp_edge <- peptide_pairwise$seq %>% 
+      left_join(pairwise_filter$blastp, 
+                by = intersect(colnames(pairwise_filter$seq),
+                               colnames(pairwise_filter$blastp)))
+    
+    # construct an igraph object
+    blastp_net <- igraph::graph_from_data_frame(d = blastp_edge,
+                                                vertices = peptide_info_filtered(),
+                                                directed = FALSE)
+    
+    # fortify the igraph to a data frame suitable for ggplot2
+    set.seed(input$seed)
+    suppressWarnings({
+      blastp_net_df <- ggnetwork::ggnetwork(x = blastp_net,
+                                            layout = igraph::with_fr())
+    })
+    
+    # filter the edges
+    blastp_net_df <- blastp_net_df %>% 
+      filter(!is.na(evalue)) %>% 
+      filter(between(evalue, input$evalue[1], input$evalue[2]))
+    
+    
+    
+    ## Ab reactivity correlation network -----
+    
+    # construct an igraph object
+    seq_sim_net <- igraph::graph_from_data_frame(d = peptide_pairwise$cor,
+                                                 vertices = peptide_info_filtered(),
+                                                 directed = FALSE)
+    
+    # fortify the igraph to a data frame suitable for ggplot2
+    set.seed(input$seed)
+    suppressWarnings({
+      seq_sim_net_df <- ggnetwork::ggnetwork(x = seq_sim_net,
+                                             layout = igraph::with_fr())
+    })
+    
+    # filter the edges
+    seq_sim_net_df <- seq_sim_net_df %>% 
+      filter(between(nchar, input$nchar[1], input$nchar[2])) %>% 
+      filter(between(matches, input$matches[1], input$matches[2])) %>% 
+      filter(between(match_seq_length, input$match_seq_length[1], input$match_seq_length[2])) %>%
+      filter(between(sim_score, input$sim_score[1], input$sim_score[2]))
+
+  })
 
 
   # observeEvent(input$filter_var,
