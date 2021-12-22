@@ -473,17 +473,7 @@ ui <- fluidPage(
                   value = c(0, 1), 
                   step = 0.01, 
                   ticks = FALSE, 
-                  dragRange = TRUE),
-      
-      br(),
-      
-      # seed for determine the coordinate of vertices
-      numericInput(inputId = "seed", 
-                   label = "Seed", 
-                   min = 1, 
-                   max = 1000, 
-                   value = 111, 
-                   step = 1),
+                  dragRange = TRUE)
       
     ),
     
@@ -499,13 +489,12 @@ ui <- fluidPage(
                    value = 111, 
                    step = 1),
       
-      selectInput(inputId = "color_var", 
-                  label = "Color of nodes", 
-                  choices = c("family", "genus", "species", "organism"), 
-                  selected = "family",
-                  multiple = FALSE)),
+      uiOutput("cluster_variable"),
+      
+      uiOutput("color_variable"),
     
-    ),
+    )
+  ),
     
   
   fluidRow(
@@ -559,6 +548,9 @@ ui <- fluidPage(
                 
                 tabPanel("peptide pairwise calculation",
                          dataTableOutput("pairwise_all")),
+                
+                tabPanel("network data",
+                         dataTableOutput("network_dt")),
                 
                 tabPanel("sequence similarity", 
                          plotlyOutput("plotly_seq")),
@@ -622,14 +614,42 @@ server <- function(input, output, session) {
     filter_list <- names(peptide_metadata())
     filter_list <- filter_list[!(filter_list %in% c("u_pep_id", "pep_aa"))]
     
-    default_filter <- grep(pattern = "taxon_", x = filter_list, value = TRUE)
-    
     # create a multiple selection UI to allow the user to decide which variables to filter
     selectizeInput(inputId = "filter_var", 
-                   label = "Vriables for further filtering",
+                   label = "Variables for further filtering",
                    choices = filter_list,
                    multiple = TRUE, 
                    options = list(placeholder = "type variable namnes"))
+    
+  })
+  
+  output$cluster_variable <- renderUI({
+    
+    # a list of variables in peptide info
+    filter_list <- names(peptide_metadata())
+    filter_list <- filter_list[!(filter_list %in% c("u_pep_id", "pep_aa"))]
+    
+    # create a multiple selection UI to allow the user to decide which variables to filter
+    selectizeInput(inputId = "cluster_var", 
+                   label = "Variables for clustering peptides",
+                   choices = filter_list,
+                   multiple = TRUE, 
+                   options = list(placeholder = "type variable namnes"))
+    
+  })
+  
+  output$color_variable <- renderUI({
+    
+    # a list of variables in peptide info
+    filter_list <- names(peptide_metadata())
+    filter_list <- filter_list[!(filter_list %in% c("u_pep_id", "pep_aa"))]
+    
+    # create a multiple selection UI to allow the user to decide which variables to filter
+    selectInput(inputId = "color_var", 
+                label = "Variables for peptide colors",
+                choices = filter_list,
+                multiple = FALSE,
+                selectize = FALSE)
     
   })
   
@@ -741,7 +761,7 @@ server <- function(input, output, session) {
       if(class(dt[[v]]) %in% c("integer", "numeric")){
 
         dt <- dt %>%
-          dplyr::filter(between(get(v), input[[v]][1], input[[v]][2]))
+          dplyr::filter(between(get(v), input[[v]][1], input[[v]][2]) | is.na(get(v)))
         
       }else{
         
@@ -774,7 +794,7 @@ server <- function(input, output, session) {
     
     dt <- dt %>% 
       left_join(hit_freq, by = "u_pep_id") %>% 
-      filter(between(frequency, freq_threshold[1], freq_threshold[2])) %>% 
+      filter(between(frequency, freq_threshold[1], freq_threshold[2]) | is.na(frequency)) %>% 
       mutate(u_pep_id = ordered(u_pep_id, levels = u_pep_id))
     
     data_filtered$pep <- dt
@@ -996,30 +1016,39 @@ server <- function(input, output, session) {
     
     # filter the BLASTP results
     pairwise_filter$blastp <- peptide_pairwise$blastp %>% 
-      filter(between(evalue, input$evalue[1], input$evalue[2]))
+      filter(between(evalue, input$evalue[1], input$evalue[2]) | is.na(evalue))
     
     # filter the sequence alignment results
     pairwise_filter$seq <- peptide_pairwise$seq %>% 
-      filter(between(nchar, input$nchar[1], input$nchar[2])) %>% 
-      filter(between(matches, input$matches[1], input$matches[2])) %>% 
-      filter(between(match_seq_length, input$match_seq_length[1], input$match_seq_length[2])) %>%
-      filter(between(sim_score, input$sim_score[1], input$sim_score[2]))
+      filter(between(nchar,            input$nchar[1],            input$nchar[2])            | is.na(nchar)) %>% 
+      filter(between(matches,          input$matches[1],          input$matches[2])          | is.na(matches)) %>% 
+      filter(between(match_seq_length, input$match_seq_length[1], input$match_seq_length[2]) | is.na(match_seq_length)) %>%
+      filter(between(sim_score,        input$sim_score[1],        input$sim_score[2])        | is.na(sim_score))
     
     # filter the Ab correlation
     pairwise_filter$cor <- peptide_pairwise$cor %>% 
-      filter(between(cor, input$cor[1], input$cor[2]))
+      filter(between(cor, input$cor[1], input$cor[2]) | is.na(cor))
       
     # filter the Ab jaccard index
     pairwise_filter$jac <- peptide_pairwise$jac %>% 
-      filter(between(jaccard, input$jaccard[1], input$jaccard[2]))
+      filter(between(jaccard, input$jaccard[1], input$jaccard[2]) | is.na(jaccard))
     
     # combine the results
-    pairwise_filter$all <- pairwise_filter$seq %>% 
-      left_join(pairwise_filter$blastp, 
-                by = intersect(colnames(pairwise_filter$seq),
-                               colnames(pairwise_filter$blastp))) %>% 
-      left_join(pairwise_filter$cor, by = c("id1", "id2")) %>% 
-      left_join(pairwise_filter$jac, by = c("id1", "id2"))
+    pairwise_filter$all <- peptide_pairwise$all %>% 
+      filter(between(evalue,           input$evalue[1],           input$evalue[2])           | is.na(evalue)) %>% 
+      filter(between(nchar,            input$nchar[1],            input$nchar[2])            | is.na(nchar)) %>% 
+      filter(between(matches,          input$matches[1],          input$matches[2])          | is.na(matches)) %>% 
+      filter(between(match_seq_length, input$match_seq_length[1], input$match_seq_length[2]) | is.na(match_seq_length)) %>%
+      filter(between(sim_score,        input$sim_score[1],        input$sim_score[2])        | is.na(sim_score)) %>% 
+      filter(between(cor,              input$cor[1],              input$cor[2])              | is.na(cor))%>% 
+      filter(between(jaccard,          input$jaccard[1],          input$jaccard[2])          | is.na(jaccard))
+      
+    # pairwise_filter$all <- pairwise_filter$seq %>% 
+    #   left_join(pairwise_filter$blastp, 
+    #             by = intersect(colnames(pairwise_filter$seq),
+    #                            colnames(pairwise_filter$blastp))) %>% 
+    #   left_join(pairwise_filter$cor, by = c("id1", "id2")) %>% 
+    #   left_join(pairwise_filter$jac, by = c("id1", "id2"))
     
   })
   
@@ -1055,383 +1084,84 @@ server <- function(input, output, session) {
 
   # g) network construction ---------------------------------------------------------------------
 
-  network_dt <- reactive({
-
-    # # weight to group species and genus together
-    # weight_same_family <- 1
-    # weight_same_genus <- 1
-    # weight_same_species <- 1
-    
-    net_vertices <- data_filtered$pep
-    
-    ## sequence similarity network -----
-
-    # construct an igraph object
-    seq_sim_net <- igraph::graph_from_data_frame(d = peptide_pairwise$seq,
-                                                 vertices = data_filtered$pep,
-                                                 directed = FALSE)
-
-    # # weight of edges
-    # E(seq_sim_net)$weight <- E(seq_sim_net)$sim_score +
-    #   E(seq_sim_net)$same_family  * weight_same_family +
-    #   E(seq_sim_net)$same_genus   * weight_same_genus +
-    #   E(seq_sim_net)$same_species * weight_same_species
-
-    # fortify the igraph to a data frame suitable for ggplot2
-    set.seed(input$seed)
-    suppressWarnings({
-      seq_sim_net_df <- ggnetwork::ggnetwork(x = seq_sim_net,
-                                             layout = igraph::with_fr())
-    })
-    
-    # filter the edges
-    seq_sim_net_df <- seq_sim_net_df %>% 
-      filter(between(nchar, input$nchar[1], input$nchar[2])) %>% 
-      filter(between(matches, input$matches[1], input$matches[2])) %>% 
-      filter(between(match_seq_length, input$match_seq_length[1], input$match_seq_length[2])) %>%
-      filter(between(sim_score, input$sim_score[1], input$sim_score[2]))
-    
-    
-    
-    ## BLASTP network -----
-    
-    # all pairs of peptides
-    blastp_edge <- peptide_pairwise$seq %>% 
-      left_join(pairwise_filter$blastp, 
-                by = intersect(colnames(pairwise_filter$seq),
-                               colnames(pairwise_filter$blastp)))
-    
-    # construct an igraph object
-    blastp_net <- igraph::graph_from_data_frame(d = blastp_edge,
-                                                vertices = data_filtered$pep,
-                                                directed = FALSE)
-    
-    # fortify the igraph to a data frame suitable for ggplot2
-    set.seed(input$seed)
-    suppressWarnings({
-      blastp_net_df <- ggnetwork::ggnetwork(x = blastp_net,
-                                            layout = igraph::with_fr())
-    })
-    
-    # filter the edges
-    blastp_net_df <- blastp_net_df %>% 
-      filter(!is.na(evalue)) %>% 
-      filter(between(evalue, input$evalue[1], input$evalue[2]))
-    
-    
-    
-    ## Ab reactivity correlation network -----
-    
-    # construct an igraph object
-    seq_sim_net <- igraph::graph_from_data_frame(d = peptide_pairwise$cor,
-                                                 vertices = data_filtered$pep,
-                                                 directed = FALSE)
-    
-    # fortify the igraph to a data frame suitable for ggplot2
-    set.seed(input$seed)
-    suppressWarnings({
-      seq_sim_net_df <- ggnetwork::ggnetwork(x = seq_sim_net,
-                                             layout = igraph::with_fr())
-    })
-    
-    # filter the edges
-    seq_sim_net_df <- seq_sim_net_df %>% 
-      filter(between(nchar, input$nchar[1], input$nchar[2])) %>% 
-      filter(between(matches, input$matches[1], input$matches[2])) %>% 
-      filter(between(match_seq_length, input$match_seq_length[1], input$match_seq_length[2])) %>%
-      filter(between(sim_score, input$sim_score[1], input$sim_score[2]))
-
-  })
-
-
-  # observeEvent(input$filter_var,
-  #              {
-  #                print(input)
-  #                # updateSelectizeInput(session,
-  #                #                      inputId = input[[input$filter_var[1]]],
-  #                #                      choices = c("all"),
-  #                #                      selected = NULL,
-  #                #                      server = TRUE)
-  #              })
+  network_dt <- reactiveValues()
   
-  # 
-  # 
-  # 
-  # # select virus family
-  # updateSelectizeInput(session, 
-  #                      inputId = "family", 
-  #                      choices = c("all", unique(taxa_protein$family)), 
-  #                      selected = NULL,
-  #                      server = TRUE,
-  #                      options = list(delimiter = " ", create = T))
-  # 
-  # # select virus genus
-  # observeEvent(input$family,
-  #              {
-  #                # update the genus choices according to virus family input
-  #                temp <- taxa_protein %>% 
-  #                {if(!("all" %in% input$family)){
-  #                  dplyr::filter(., family %in% input$family)
-  #                }else{
-  #                  .
-  #                }}
-  #                
-  #                updateSelectizeInput(session, 
-  #                                     inputId = "genus", 
-  #                                     choices = c("all", unique(temp$genus)), 
-  #                                     selected = NULL,
-  #                                     server = TRUE)
-  #              })
-  # 
-  # # select virus species
-  # observeEvent(input$genus,
-  #              {
-  #                # update the species choices according to virus genus input
-  #                temp <- taxa_protein %>% 
-  #                {if(!("all" %in% input$family)){
-  #                  dplyr::filter(., family %in% input$family)
-  #                }else{
-  #                  .
-  #                }} %>% 
-  #                {if(!("all" %in% input$genus)){
-  #                  dplyr::filter(., genus %in% input$genus)
-  #                }else{
-  #                  .
-  #                }}
-  #                
-  #                updateSelectizeInput(session, 
-  #                                     inputId = "species", 
-  #                                     choices = c("all", unique(temp$species)), 
-  #                                     selected = NULL,
-  #                                     server = TRUE)
-  #              })
-  # 
-  # # select virus organism
-  # observeEvent(input$species,
-  #              {
-  #                # update the organism choices according to virus species input
-  #                temp <- taxa_protein %>% 
-  #                {if(!("all" %in% input$family)){
-  #                  dplyr::filter(., family %in% input$family)
-  #                }else{
-  #                  .
-  #                }} %>% 
-  #                {if(!("all" %in% input$genus)){
-  #                  dplyr::filter(., genus %in% input$genus)
-  #                }else{
-  #                  .
-  #                }} %>% 
-  #                {if(!("all" %in% input$species)){
-  #                  dplyr::filter(., species %in% input$species)
-  #                }else{
-  #                  .
-  #                }}
-  #                
-  #                updateSelectizeInput(session, 
-  #                                     inputId = "organism", 
-  #                                     choices = c("all", unique(temp$organism)), 
-  #                                     selected = NULL,
-  #                                     server = TRUE)
-  #              })
-  # 
-  # # select protein
-  # observeEvent(input$organism,
-  #              {
-  #                # update the protein choices according to virus organism input
-  #                temp <- taxa_protein %>% 
-  #                {if(!("all" %in% input$family)){
-  #                  dplyr::filter(., family %in% input$family)
-  #                }else{
-  #                  .
-  #                }} %>% 
-  #                {if(!("all" %in% input$genus)){
-  #                  dplyr::filter(., genus %in% input$genus)
-  #                }else{
-  #                  .
-  #                }} %>% 
-  #                {if(!("all" %in% input$species)){
-  #                  dplyr::filter(., species %in% input$species)
-  #                }else{
-  #                  .
-  #                }} %>% 
-  #                {if(!("all" %in% input$organism)){
-  #                  dplyr::filter(., organism %in% input$organism)
-  #                }else{
-  #                  .
-  #                }}
-  #                
-  #                updateSelectizeInput(session, 
-  #                                     inputId = "uniprot", 
-  #                                     choices = c("all", unique(temp$UniProt_acc)), 
-  #                                     selected = NULL,
-  #                                     server = TRUE)
-  #              })
-  
-  
-
-  
-  # # build the network
-  # network_dt <- eventReactive(input$load, {
-  #   
-  #   var_list <- input$filter_var
-  #   
-  #   ### vextices
-  #   if("all" %in% input$family){  # filter family
-  #     vertex_d <- epitope_info
-  #   }else{
-  #     vertex_d <- epitope_info %>% 
-  #       dplyr::filter(family %in% input$family)
-  #   }
-  #   
-  #   if("all" %in% input$genus){  # filter genus
-  #     vertex_d <- vertex_d
-  #   }else{
-  #     vertex_d <- vertex_d %>% 
-  #       dplyr::filter(genus %in% input$genus)
-  #   }
-  #   
-  #   if("all" %in% input$species){  # filter species
-  #     vertex_d <- vertex_d
-  #   }else{
-  #     vertex_d <- vertex_d %>% 
-  #       dplyr::filter(species %in% input$species)
-  #   }
-  #   
-  #   if("all" %in% input$organism){  # filter virus organism
-  #     vertex_d <- vertex_d
-  #   }else{
-  #     vertex_d <- vertex_d %>% 
-  #       dplyr::filter(organism %in% input$organism)
-  #   }
-  #   
-  #   if("all" %in% input$uniprot){  # filter protein UniProt accession number
-  #     vertex_d <- vertex_d
-  #   }else{
-  #     vertex_d <- vertex_d %>% 
-  #       dplyr::filter(UniProt_acc %in% input$uniprot)
-  #   }
-  #   
-  #   if("freq" %in% names(epitope_info)){  # filter by peptide's enrichment frequency (column "freq")
-  #     vertex_d <- vertex_d %>% 
-  #       dplyr::filter(freq >= input$frequency[1], freq <= input$frequency[2])
-  #   }else{
-  #     vertex_d <- vertex_d %>% 
-  #       dplyr::mutate(freq = 1)
-  #   }
-  #   
-  #   
-  #   ### edges
-  #   edge_d <- epitope_pair %>% 
-  #     dplyr::filter(subject_id %in% vertex_d$id,
-  #                   pattern_id %in% vertex_d$id)
-  #   
-  #   # construct an igraph object
-  #   net <- igraph::graph_from_data_frame(d = edge_d, 
-  #                                        vertices = vertex_d, 
-  #                                        directed = FALSE)
-  #   
-  #   # weight to group species and genus together
-  #   weight_same_family <- 1
-  #   weight_same_genus <- 1
-  #   weight_same_species <- 1
-  #   
-  #   # weight of edges
-  #   E(net)$weight <- E(net)$sim_score + 
-  #     E(net)$same_family  * weight_same_family + 
-  #     E(net)$same_genus   * weight_same_genus + 
-  #     E(net)$same_species * weight_same_species
-  #   
-  #   # fortify the igraph to a data frame suitable for ggplot2
-  #   set.seed(input$seed)
-  #   suppressWarnings({
-  #     net_fig_df <- ggnetwork::ggnetwork(x = net, 
-  #                                        layout = igraph::with_fr())
-  #   })
-  #   
-  #   return(net_fig_df)
-  # })
-  
-  
-  
-  # filter the network
-  network_flt <- eventReactive(input$filter, {
+  observeEvent(input$plot, {
     
-    if(nrow(network_dt()) > 0){
-      net_fig_df <- network_dt() %>% 
-        dplyr::filter((nchar >= input$nchar[1] & 
-                       nchar <= input$nchar[2]) | 
-                       is.na(nchar)) %>% 
-        dplyr::filter((matches >= input$matches[1] & 
-                       matches <= input$matches[2]) | 
-                       is.na(matches)) %>% 
-        dplyr::filter((match_seq_length >= input$match_seq_length[1] &
-                       match_seq_length <= input$match_seq_length[2]) | 
-                       is.na(match_seq_length)) %>% 
-        dplyr::filter((sim_score >= input$sim_score[1] & 
-                       sim_score <= input$sim_score[2]) | 
-                       is.na(sim_score)) %>% 
-        dplyr::filter((cor >= input$cor[1] & 
-                       cor <= input$cor[2]) | 
-                       is.na(cor)) %>% 
-        dplyr::filter((jaccard >= input$jaccard[1] & 
-                       jaccard <= input$jaccard[2]) | 
-                       is.na(jaccard))
+    # edges
+    peptide_edges <- peptide_pairwise$all
+    
+    # examine if the two peptides have the same value in the variables selected for clustering
+    if(!is.null(input$cluster_var)){
       
-      # filter epitope pairs by their virus family
-      if(input$same_family == "yes"){
-        net_fig_df <- net_fig_df %>% dplyr::filter(same_family == TRUE | is.na(same_family))
-      }else if(input$same_family == "no"){
-        net_fig_df <- net_fig_df %>% dplyr::filter(same_family == FALSE | is.na(same_family))
+      for(v in input$cluster_var){
+        peptide_edges <- peptide_edges %>% 
+          mutate(!!paste0("same_", v) := get(paste0("id1_", v)) == get(paste0("id2_", v))) %>% 
+          mutate(!!paste0("same_", v) := ifelse(test = is.na(get(paste0("same_", v))), 
+                                                yes = FALSE, 
+                                                no = get(paste0("same_", v))))
       }
       
-      # filter epitope pairs by their virus genus
-      if(input$same_genus == "yes"){
-        net_fig_df <- net_fig_df %>% dplyr::filter(same_genus == TRUE | is.na(same_genus))
-      }else if(input$same_genus == "no"){
-        net_fig_df <- net_fig_df %>% dplyr::filter(same_genus == FALSE | is.na(same_genus))
-      }
-      
-      # filter epitope pairs by their virus species
-      if(input$same_species == "yes"){
-        net_fig_df <- net_fig_df %>% dplyr::filter(same_species == TRUE | is.na(same_species))
-      }else if(input$same_species == "no"){
-        net_fig_df <- net_fig_df %>% dplyr::filter(same_species == FALSE | is.na(same_species))
-      }
-      
-      # filter epitope pairs by their virus organism
-      if(input$same_organism == "yes"){
-        net_fig_df <- net_fig_df %>% dplyr::filter(same_organism == TRUE | is.na(same_organism))
-      }else if(input$same_organism == "no"){
-        net_fig_df <- net_fig_df %>% dplyr::filter(same_organism == FALSE | is.na(same_organism))
-      }
-      
-      # filter tiled epitopes
-      if(input$tiling == "yes"){
-        net_fig_df <- net_fig_df %>% dplyr::filter(tiling == TRUE | is.na(tiling))
-      }else if(input$tiling == "no"){
-        net_fig_df <- net_fig_df %>% dplyr::filter(tiling == FALSE | is.na(tiling))
-      }
-
-    }else{
-      net_fig_df <- network_dt()
     }
     
-    # # A message if the number of nodes and edges are too many
-    # session$sendCustomMessage(type = 'testmessage',
-    #                           message = 'Thank you for clicking')
+    # total number of matching clustering variables
+    peptide_edges <- peptide_edges %>% 
+      rowwise() %>% 
+      mutate(cluster_weight = sum(c_across(starts_with("same_")))) %>% 
+      ungroup()
     
-    return(net_fig_df)
+    
+    # construct an igraph object
+    peptide_net <- igraph::graph_from_data_frame(d        = peptide_edges,
+                                                 vertices = data_filtered$pep,
+                                                 directed = FALSE)
+    
+    # add weight to edges
+    weight_per_var <- 1
+    E(peptide_net)$weight <- E(peptide_net)$sim_score + 
+      weight_per_var * E(peptide_net)$cluster_weight
+
+    
+    # fortify the igraph to a data frame suitable for ggplot2
+    set.seed(input$seed)
+    suppressWarnings({
+      peptide_net_df <- ggnetwork::ggnetwork(x = peptide_net,
+                                             layout = igraph::with_fr())
+    })
+    
+    
+    # filter the edges
+    peptide_net_df <- peptide_net_df %>% 
+      filter(between(evalue,           input$evalue[1],           input$evalue[2])           | is.na(evalue)) %>% 
+      filter(between(nchar,            input$nchar[1],            input$nchar[2])            | is.na(nchar)) %>% 
+      filter(between(matches,          input$matches[1],          input$matches[2])          | is.na(matches)) %>% 
+      filter(between(match_seq_length, input$match_seq_length[1], input$match_seq_length[2]) | is.na(match_seq_length)) %>%
+      filter(between(sim_score,        input$sim_score[1],        input$sim_score[2])        | is.na(sim_score)) %>% 
+      filter(between(cor,              input$cor[1],              input$cor[2])              | is.na(cor))%>% 
+      filter(between(jaccard,          input$jaccard[1],          input$jaccard[2])          | is.na(jaccard))
+    
+    network_dt$dt <- peptide_net_df
+
   })
   
+  
+  output$network_dt  <- renderDataTable({
+    req(network_dt$dt)
+    network_dt$dt 
+  })
+  
+  
+  
+
   
   # visualize the network: sequence similarity
   output$plotly_seq <- renderPlotly({
     
-    req(network_flt())
+    req(network_dt$dt)
     
-    if(nrow(network_flt()) > 0){
+    if(nrow(network_dt$dt) > 0){
       
-      epitope_network_visualization(net_df = network_flt(),
+      epitope_network_visualization(net_df = network_dt$dt,
                                     color_var = input$color_var,
                                     color_title = "",
                                     color_pal = manualPalette,
@@ -1452,11 +1182,11 @@ server <- function(input, output, session) {
   # visualize the network: co-occurrence jaccard index
   output$plotly_jaccard <- renderPlotly({
     
-    req(network_flt())
+    req(network_dt$dt)
     
-    if(nrow(network_flt()) > 0){
+    if(nrow(network_dt$dt) > 0){
       
-      epitope_network_visualization(net_df = network_flt(),
+      epitope_network_visualization(net_df = network_dt$dt,
                                     color_var = input$color_var,
                                     color_title = "",
                                     color_pal = manualPalette,
@@ -1476,11 +1206,11 @@ server <- function(input, output, session) {
   # visualize the network: correlation
   output$plotly_cor <- renderPlotly({
     
-    req(network_flt())
+    req(network_dt$dt)
     
-    if(nrow(network_flt()) > 0){
+    if(nrow(network_dt$dt) > 0){
       
-      epitope_network_visualization(net_df = network_flt(),
+      epitope_network_visualization(net_df = network_dt$dt,
                                     color_var = input$color_var,
                                     color_title = "",
                                     color_pal = manualPalette,
