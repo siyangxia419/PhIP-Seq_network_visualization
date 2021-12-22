@@ -99,9 +99,11 @@ blastp_dm <- function(pep_dt,
   predp[predp$id1 > predp$id2, c("id1", "id2")] <- 
     predp[predp$id1 > predp$id2, c("id2", "id1")]
   
-  # remove duplicated calcuation. If evalue differ between the two calculation, use the smaller evalue
+  # remove duplicated calcuation
+  predp <- predp %>% dplyr::distinct()
+  
+  # if evalue differ between the two calculation, use the smaller evalue
   predp2 <- predp %>% 
-    dplyr::distinct() %>% 
     dplyr::group_by(id1, id2) %>% 
     dplyr::summarise(evalue = min(evalue), .groups = "drop") %>% 
     dplyr::left_join(predp, by = c("id1", "id2", "evalue"))
