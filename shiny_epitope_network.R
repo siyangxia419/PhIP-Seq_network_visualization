@@ -718,7 +718,9 @@ server <- function(input, output, session) {
   # c) filter the peptides and samples ----------------------------------------------------------
 
   ### filter the peptide information based on the selected variables
-  peptide_info_filtered <- eventReactive(input$load, {
+  peptide_info_filtered <- reactiveValues()
+  
+  observeEvent(input$load, {
     
     # filter peptide metadata according to the selected variables
     var_list <- input$filter_var
@@ -765,13 +767,15 @@ server <- function(input, output, session) {
       left_join(hit_freq, by = "u_pep_id") %>% 
       filter(frequency >= freq_threshold[1], frequency <= freq_threshold[2])
     
-    return(dt)
+    peptide_info_filtered$dt <- dt
 
   })
   
   
   ### filter the peptide information based on the selected variables
-  ab_reactivity_filtered <- eventReactive(input$load, {
+  ab_reactivity_filtered <- reactiveValues()
+  
+  observeEvent(input$load, {
     
     sample_list <- input$select_sample
     if("all" %in% sample_list | is.null(sample_list)) sample_list <- names(ab_data())[-1]
@@ -779,7 +783,7 @@ server <- function(input, output, session) {
     dt <- ab_data() %>% 
       select(u_pep_id, all_of(sample_list))
     
-    return(dt)
+    ab_reactivity_filtered$dt <- dt
     
   })
   
@@ -790,14 +794,14 @@ server <- function(input, output, session) {
 
   output$n_node <- renderUI({
     
-    req(peptide_info_filtered())
-    req(ab_reactivity_filtered())
+    req(peptide_info_filtered$dt)
+    req(ab_reactivity_filtered$dt)
     
-    n_pep <- nrow(peptide_info_filtered())
-    n_pep2 <- nrow(ab_reactivity_filtered())
-    n_sam <- ncol(ab_reactivity_filtered()) - 1
+    n_pep <- nrow(peptide_info_filtered$dt)
+    n_pep2 <- nrow(ab_reactivity_filtered$dt)
+    n_sam <- ncol(ab_reactivity_filtered$dt) - 1
     
-    same_peptides <- setequal(peptide_info_filtered()$u_pep_id, ab_reactivity_filtered()$u_pep_id)
+    same_peptides <- setequal(peptide_info_filtered$dt$u_pep_id, ab_reactivity_filtered$dt$u_pep_id)
     
     if(n_pep == n_pep2 & same_peptides){
       text_to_print <- paste(paste("Number of peptides:", n_pep),
@@ -822,9 +826,9 @@ server <- function(input, output, session) {
     return(HTML(text_to_print))
   })
   
-  output$peptide_info_table <- renderDataTable(peptide_info_filtered())
+  output$peptide_info_table <- renderDataTable(peptide_info_filtered$dt)
   
-  output$ab_reactivity_table <- renderDataTable(ab_reactivity_filtered())
+  output$ab_reactivity_table <- renderDataTable(ab_reactivity_filtered$dt)
   
   
   
@@ -835,13 +839,13 @@ server <- function(input, output, session) {
     
     withProgress(message = "calculating", value = 0, { 
     
-    peptide_id_list <- peptide_info_filtered()$u_pep_id
+    peptide_id_list <- peptide_info_filtered$dt$u_pep_id
     
     setProgress(value = 0.05, message = "start computing")
     
     ### sequence similarity analysis using the "virlink" package
     peptide_seq_sim <- peptide_pairwise_alignment(
-      peptides        = peptide_info_filtered(),
+      peptides        = peptide_info_filtered$dt,
       id_col          = "u_pep_id",
       seq_col         = "pep_aa",
       sub_matrix      = input$sub_matrix, 
@@ -876,7 +880,7 @@ server <- function(input, output, session) {
     setProgress(value = 0.25, message = "finished peptide alignment")
     
     ### sequence similarity analysis using BLAST
-    peptide_blastp <- blastp_dm(pep_dt     = peptide_info_filtered(), 
+    peptide_blastp <- blastp_dm(pep_dt     = peptide_info_filtered$dt, 
                                 fasta_dir  = input$local_dir, 
                                 blastp_arg = input$blastp_arg,
                                 other_info = TRUE)
@@ -889,7 +893,7 @@ server <- function(input, output, session) {
     
     
     ### antibody reactivity correlation
-    ab_reactivity_formatted <- ab_reactivity_filtered() %>% 
+    ab_reactivity_formatted <- ab_reactivity_filtered$dt %>% 
       column_to_rownames(var = "u_pep_id") %>% 
       t() %>% 
       as.data.frame()
@@ -924,7 +928,7 @@ server <- function(input, output, session) {
     
     
     ### check if the peptides in the peptide metadata and the antibody reactivity are the same
-    same_peptides <- setequal(peptide_info_filtered()$u_pep_id, ab_reactivity_filtered()$u_pep_id)
+    same_peptides <- setequal(peptide_info_filtered$dt$u_pep_id, ab_reactivity_filtered$dt$u_pep_id)
     peptide_pairwise$same <- same_peptides
     
     
@@ -932,8 +936,8 @@ server <- function(input, output, session) {
     
     # if the peptides are different between the two inputs
     if(!same_peptides){
-      peptide_id_list <- peptide_id_list[peptide_id_list %in% intersect(peptide_info_filtered()$u_pep_id, 
-                                                                        ab_reactivity_filtered()$u_pep_id)]
+      peptide_id_list <- peptide_id_list[peptide_id_list %in% intersect(peptide_info_filtered$dt$u_pep_id, 
+                                                                        ab_reactivity_filtered$dt$u_pep_id)]
       
       peptide_seq_sim <- peptide_seq_sim %>% 
         filter(id1 %in% peptide_id_list, id2 %in% peptide_id_list)
@@ -1068,13 +1072,13 @@ server <- function(input, output, session) {
     # weight_same_genus <- 1
     # weight_same_species <- 1
     
-    net_vertices <- peptide_info_filtered()
+    net_vertices <- peptide_info_filtered$dt
     
     ## sequence similarity network -----
 
     # construct an igraph object
     seq_sim_net <- igraph::graph_from_data_frame(d = peptide_pairwise$seq,
-                                                 vertices = peptide_info_filtered(),
+                                                 vertices = peptide_info_filtered$dt,
                                                  directed = FALSE)
 
     # # weight of edges
@@ -1109,7 +1113,7 @@ server <- function(input, output, session) {
     
     # construct an igraph object
     blastp_net <- igraph::graph_from_data_frame(d = blastp_edge,
-                                                vertices = peptide_info_filtered(),
+                                                vertices = peptide_info_filtered$dt,
                                                 directed = FALSE)
     
     # fortify the igraph to a data frame suitable for ggplot2
@@ -1130,7 +1134,7 @@ server <- function(input, output, session) {
     
     # construct an igraph object
     seq_sim_net <- igraph::graph_from_data_frame(d = peptide_pairwise$cor,
-                                                 vertices = peptide_info_filtered(),
+                                                 vertices = peptide_info_filtered$dt,
                                                  directed = FALSE)
     
     # fortify the igraph to a data frame suitable for ggplot2
