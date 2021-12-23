@@ -141,6 +141,7 @@ epitope_network_visualization <- function(net_df,
   
   # check if any edge should be plotted
   any_edge <- any(!(is.na(net_df[[edge_var]])))
+  if(all(net_df[[edge_var]] == 0 | is.na(net_df[[edge_var]]))) any_edge <- FALSE
   
   # vertex color
   ncolor <- length(unique(net_df[, color_var]))
