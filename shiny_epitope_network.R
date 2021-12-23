@@ -128,18 +128,19 @@ blastp_dm <- function(pep_dt,
 # d) function to plot the network -----------------------------------------
 
 epitope_network_visualization <- function(net_df, 
-                                          color_var = "genus",
-                                          color_title = "virus",
+                                          color_var = "taxon_genus",
+                                          color_title = "",
                                           color_pal = c("#0072B2", "#56B4E9", "#009E73", "#F0E442", "#D55E00"),
                                           edge_var = "sim_score",
                                           edge_title = "similarity score",
                                           edge_presentation = "color", 
-                                          vertex_size_var = "freq",
+                                          vertex_size_var = "frequency",
                                           fig_title = "peptide network",
-                                          interactive_plot = TRUE){
+                                          interactive_plot = TRUE,
+                                          var_to_show = ""){
   
   # check if any edge should be plotted
-  any_edge <- any(!(is.na(net_df$string_compare)))
+  any_edge <- any(!(is.na(net_df[[edge_var]])))
   
   # vertex color
   ncolor <- length(unique(net_df[, color_var]))
@@ -167,21 +168,24 @@ epitope_network_visualization <- function(net_df,
                                 no = (x + xend) / 2),
                     y1 = ifelse(test = is.na(string_compare), 
                                 yes = NA, 
-                                no = (y + yend) / 2),
-                    text = ifelse(test = is.na(string_compare),
-                                  yes  = paste(paste0("peptide id: ", name), 
-                                               paste0("family    : ", family),
-                                               paste0("genus     : ", genus),
-                                               paste0("species   : ", species),
-                                               paste0("strain    : ", organism),
-                                               paste0("protein   : ", UniProt_acc),
-                                               paste0("sequence  : ", pep_aa),
-                                               paste0("enrichment frequency: ", round(freq, 3)),
-                                               sep = "<br>"), 
+                                no = (y + yend) / 2))
+    
+    # text to show when mouse hover
+    net_df$edge_text <- ""
+    for(v in var_to_show){
+      net_df <- net_df %>% 
+        mutate(edge_text = paste0(edge_text, "<br>", v, ": ", get(v)))
+    }
+        
+
+    net_df <- net_df %>% 
+      dplyr::mutate(text = ifelse(test = is.na(string_compare),
+                                  yes  = paste0(paste0("u_pep_id: ", name), 
+                                               edge_text, "<br>",
+                                               paste0("frequency: ", round(frequency, 3))), 
                                   no   = paste(paste0("peptide 1: ", name),
-                                               paste0("virus    : ", subject_organism),
                                                paste0("peptide 2: ", nameend),
-                                               paste0("virus    : ", pattern_organism),
+                                               paste0("E-value: ", evalue),
                                                paste0("alignment: ", string_compare), 
                                                paste0("sequence similarity: ", round(sim_score, 3)),
                                                paste0("Ab reactivity correlation: ", round(cor, 3)),
@@ -241,8 +245,7 @@ epitope_network_visualization <- function(net_df,
     net_fig <- net_fig +
       scale_fill_manual(name = color_title, 
                         values = vertex_color_pal) + 
-      scale_size_continuous(name = vertex_size_title,
-                            limits = c(0, 1), 
+      scale_size_continuous(limits = c(0, 1), 
                             range = c(2, 5))
     
   }else{
@@ -553,13 +556,16 @@ ui <- fluidPage(
                          dataTableOutput("network_dt")),
                 
                 tabPanel("sequence similarity", 
-                         plotlyOutput("plotly_seq")),
+                         plotlyOutput("plotly_seq", height = "100%")),
+                
+                tabPanel("sequence BLASTP", 
+                         plotlyOutput("plotly_blastp", height = "100%")),
                 
                 tabPanel("antibody reactivity correlation",
-                         plotlyOutput("plotly_cor")),
+                         plotlyOutput("plotly_cor", height = "100%")),
                 
                 tabPanel("antibody hit jaccard index",
-                         plotlyOutput("plotly_jaccard"))
+                         plotlyOutput("plotly_jaccard", height = "100%"))
     )
     
   )
@@ -1149,15 +1155,18 @@ server <- function(input, output, session) {
     req(network_dt$dt)
     network_dt$dt 
   })
-  
-  
-  
 
-  
+
+
+  # h) visualization ----------------------------------------------------------------------------
+
   # visualize the network: sequence similarity
   output$plotly_seq <- renderPlotly({
     
     req(network_dt$dt)
+    
+    var_list <- names(peptide_metadata())
+    var_list <- var_list[!(var_list %in% c("u_pep_id"))]
     
     if(nrow(network_dt$dt) > 0){
       
@@ -1168,9 +1177,39 @@ server <- function(input, output, session) {
                                     edge_var = "sim_score",
                                     edge_title = "",
                                     edge_presentation = "color",
-                                    vertex_size_var = "freq",
+                                    vertex_size_var = "frequency",
                                     fig_title = "network of sequence similarity",
-                                    interactive_plot = TRUE)
+                                    interactive_plot = TRUE, 
+                                    var_to_show = var_list)
+      
+    }else{
+      plotly_empty(type = "scatter", mode = "markers")
+    }
+    
+  })
+  
+  
+  # visualize the network: BLASTP
+  output$plotly_blastp <- renderPlotly({
+    
+    req(network_dt$dt)
+    
+    var_list <- names(peptide_metadata())
+    var_list <- var_list[!(var_list %in% c("u_pep_id"))]
+    
+    if(nrow(network_dt$dt) > 0){
+      
+      epitope_network_visualization(net_df = network_dt$dt,
+                                    color_var = input$color_var,
+                                    color_title = "",
+                                    color_pal = manualPalette,
+                                    edge_var = "evalue",
+                                    edge_title = "",
+                                    edge_presentation = "color",
+                                    vertex_size_var = "frequency",
+                                    fig_title = "network of sequence BLASTP E-value",
+                                    interactive_plot = TRUE, 
+                                    var_to_show = var_list)
       
     }else{
       plotly_empty(type = "scatter", mode = "markers")
@@ -1184,6 +1223,9 @@ server <- function(input, output, session) {
     
     req(network_dt$dt)
     
+    var_list <- names(peptide_metadata())
+    var_list <- var_list[!(var_list %in% c("u_pep_id"))]
+    
     if(nrow(network_dt$dt) > 0){
       
       epitope_network_visualization(net_df = network_dt$dt,
@@ -1193,10 +1235,10 @@ server <- function(input, output, session) {
                                     edge_var = "jaccard",
                                     edge_title = "",
                                     edge_presentation = "color",
-                                    vertex_size_var = "freq",
-                                    vertex_size_title = "",
-                                    fig_title = "network of antibody hit co-occurrence",
-                                    interactive_plot = TRUE)
+                                    vertex_size_var = "frequency",
+                                    fig_title = "network of antibody hit jaccard index",
+                                    interactive_plot = TRUE, 
+                                    var_to_show = var_list)
     }else{
       plotly_empty(type = "scatter", mode = "markers")
     }
@@ -1208,6 +1250,9 @@ server <- function(input, output, session) {
     
     req(network_dt$dt)
     
+    var_list <- names(peptide_metadata())
+    var_list <- var_list[!(var_list %in% c("u_pep_id"))]
+    
     if(nrow(network_dt$dt) > 0){
       
       epitope_network_visualization(net_df = network_dt$dt,
@@ -1217,10 +1262,10 @@ server <- function(input, output, session) {
                                     edge_var = "cor",
                                     edge_title = "",
                                     edge_presentation = "color",
-                                    vertex_size_var = "freq",
-                                    vertex_size_title = "",
+                                    vertex_size_var = "frequency",
                                     fig_title = "network of antibody reactivity correlation",
-                                    interactive_plot = TRUE)
+                                    interactive_plot = TRUE, 
+                                    var_to_show = var_list)
     }else{
       plotly_empty(type = "scatter", mode = "markers")
     }
