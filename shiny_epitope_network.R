@@ -556,16 +556,16 @@ ui <- fluidPage(
                          dataTableOutput("network_dt")),
                 
                 tabPanel("sequence similarity", 
-                         plotlyOutput("plotly_seq", height = "100%")),
+                         plotlyOutput("plotly_seq", height = "1000px")),
                 
                 tabPanel("sequence BLASTP", 
-                         plotlyOutput("plotly_blastp", height = "100%")),
+                         plotlyOutput("plotly_blastp", height = "1000px")),
                 
                 tabPanel("antibody reactivity correlation",
-                         plotlyOutput("plotly_cor", height = "100%")),
+                         plotlyOutput("plotly_cor", height = "1000px")),
                 
                 tabPanel("antibody hit jaccard index",
-                         plotlyOutput("plotly_jaccard", height = "100%"))
+                         plotlyOutput("plotly_jaccard", height = "1000px"))
     )
     
   )
