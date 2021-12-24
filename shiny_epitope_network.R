@@ -50,7 +50,7 @@ rm(install_lib, lib)
 load("VRC_full_data.RData")
 
 # manual color palette
-manualPalette = c("#0072B2", "#56B4E9", "#009E73", "#F0E442", "#D55E00")
+manualPalette = c("#0072B2", "#009E73", "#F0E442", "#D55E00")
 
 # virus taxa and protein UniProt accession numbers
 taxa_protein <- VRC_peptide_info %>% 
@@ -130,29 +130,19 @@ blastp_dm <- function(pep_dt,
 epitope_network_visualization <- function(net_df, 
                                           color_var = "taxon_genus",
                                           color_title = "",
-                                          color_pal = c("#0072B2", "#56B4E9", "#009E73", "#F0E442", "#D55E00"),
+                                          color_pal = c("#0072B2", "#009E73", "#F0E442", "#D55E00"),
                                           edge_var = "sim_score",
-                                          edge_title = "similarity score",
-                                          edge_presentation = "color", 
                                           vertex_size_var = "frequency",
                                           fig_title = "peptide network",
                                           interactive_plot = TRUE,
                                           var_to_show = ""){
   
-  # check if any edge should be plotted
-  any_edge <- any(!(is.na(net_df[[edge_var]])))
-  if(all(net_df[[edge_var]] == 0 | is.na(net_df[[edge_var]]))) any_edge <- FALSE
-  
-  # vertex color
+  ### Colors of the vertices
   ncolor <- length(unique(net_df[, color_var]))
   vertex_color_pal <- colorRampPalette(color_pal)(ncolor)  # color palette
   
-  # range of the edge metric
-  if(any_edge){
-    edge_range <- range(pretty(range(net_df[, edge_var], na.rm = TRUE)))
-  }
   
-  # prepare for plotly
+  ### Prepare the text shown when mouse hover (plotly)
   if(interactive_plot){
     
     # add the peptide id of the end point
@@ -177,13 +167,11 @@ epitope_network_visualization <- function(net_df,
       net_df <- net_df %>% 
         mutate(edge_text = paste0(edge_text, "<br>", v, ": ", get(v)))
     }
-        
-
+    
     net_df <- net_df %>% 
       dplyr::mutate(text = ifelse(test = is.na(string_compare),
                                   yes  = paste0(paste0("u_pep_id: ", name), 
-                                               edge_text, "<br>",
-                                               paste0("frequency: ", round(frequency, 3))), 
+                                                edge_text), 
                                   no   = paste(paste0("peptide 1: ", name),
                                                paste0("peptide 2: ", nameend),
                                                paste0("E-value: ", evalue),
@@ -195,64 +183,130 @@ epitope_network_visualization <- function(net_df,
   }
   
   
-  # generate the static ggplot
-  net_fig <- ggplot(net_df, aes(x = x, y = y, xend = xend, yend = yend))
+  ### Colors of the edges
+  # check if any edge should be plotted
+  any_edge <- any(!(is.na(net_df[, edge_var])))
+  if(all(net_df[, edge_var] == 0 | is.na(net_df[, edge_var]))) any_edge <- FALSE
   
-  if(edge_presentation == "width"){  # similarity score shown by edge width:
+  # transform evalue to -log scale as it decrease exponsionally as the score of match increases
+  net_df <- net_df %>% dplyr::mutate(evalue_log = -log(evalue))
+  
+  # hide edges with jaccard = 0
+  net_df <- net_df %>% dplyr::mutate(jaccard = ifelse(test = jaccard == 0,
+                                                      yes = NA, 
+                                                      no = jaccard))
+  
+  # remove edges with missing values
+  net_df <- net_df %>% 
+    filter(if_any(.cols = all_of(edge_var), ~ ( !is.na(.) | is.na(string_compare))))
+  
+  # prepare the net_df for multiple edges
+  if(length(edge_var) > 1){ 
     
-    if(any_edge){
-      net_fig <- net_fig +
-        geom_edges(aes(size = get(edge_var)), color = "black", alpha = 0.5)+
-        scale_size_continuous(name = edge_title,
-                              limits = edge_range,
-                              range = c(0, 1.5))
+    # ggplotly does not support geom_curve so plots with multiple edges cannot be converted to interactive plot
+    interactive_plot <- FALSE
+    
+    # split correlation coefficients to positive and negative
+    if("cor" %in% edge_var){
+      net_df <- net_df %>% 
+        dplyr::mutate(cor_pos = ifelse(test = cor >= 0,
+                                       yes  = cor,
+                                       no   = NA),
+                      cor_neg = ifelse(test = cor < 0,
+                                       yes = -cor, 
+                                       no = NA))
+      edge_var <- c(edge_var[edge_var != "cor"], "cor_pos", "cor_neg")
     }
     
-    if(interactive_plot){
-      net_fig <- net_fig +
-        geom_nodes(aes(color = get(color_var), text = text), size = 2)
+    if("evalue" %in% edge_var){
+      edge_var[edge_var == "evalue"] <- "evalue_log"
+      net_df$evalue_log <- (net_df$evalue_log - (-log(100))) / ((-log(0.01)) - (-log(100)))
+    }
+    
+    # sort the edge_var
+    edge_var <- ordered(edge_var, levels = c("sim_score", "evalue_log", "cor_pos", "cor_neg", "jaccard"))
+    edge_var <- as.character(sort(edge_var))
+    
+    
+    # colors and curvatures for multiple edges
+    edge_colors <- c(sim_score  = "#000000", 
+                     evalue_log = "#332288", 
+                     cor_pos    = "#E69F00", 
+                     cor_neg    = "#56B4E9", 
+                     jaccard    = "994F00")
+    
+    if((length(edge_var) %% 2) == 1){
+      edge_curves <- c(0, -0.02, 0.02, -0.04, 0.04)
     }else{
-      net_fig <- net_fig +
-        geom_nodes(aes(color = get(color_var)), size = 2)
+      edge_curves <- c(-0.02, 0.02, -0.04, 0.04, -0.06, 0.06)
     }
-    
-    net_fig <- net_fig  +
-      scale_color_manual(name = color_title,
-                         values = vertex_color_pal)
-    
-    warning("the size aesthetic mapping is used to adjust edge width, 
-            so peptide enrichment frequence is not reflected by point size.")
-    
-  }else if(edge_presentation == "color"){  # similarity score shown by gray scale
-    
-    if(any_edge){
-      net_fig <- net_fig +
-        geom_edges(aes(color = get(edge_var)), size = 1, alpha = 0.6) +
-        scale_color_gradient(name = edge_title, 
-                             low = "gray99", high = "black",
-                             limits = edge_range) 
-    }
-    
-    if(interactive_plot){
-      net_fig <- net_fig +
-        geom_nodes(aes(fill = get(color_var), text = text, size = get(vertex_size_var)), 
-                   shape = 21, stroke = 0.1)
-    }else{
-      net_fig <- net_fig +
-        geom_nodes(aes(fill = get(color_var), size = get(vertex_size_var)), 
-                   shape = 21, stroke = 0.1)
-    }
-    
-    net_fig <- net_fig +
-      scale_fill_manual(name = color_title, 
-                        values = vertex_color_pal) + 
-      scale_size_continuous(limits = c(0, 1), 
-                            range = c(2, 5))
-    
-  }else{
-    stop("invalid choice of edge presentation. please select from 'width' and 'color'.")
   }
   
+  
+  
+  ### Static ggplot
+  net_fig <- ggplot(net_df, aes(x = x, y = y, xend = xend, yend = yend))
+  
+  if(any_edge){
+    
+    if(length(edge_var) == 1){
+      
+      if(edge_var == "sim_score"){
+        net_fig <- net_fig +
+          geom_edges(aes(color = sim_score), size = 1, alpha = 0.5) +
+          scale_color_gradient(low = "white", high = "black",
+                               limits = c(0, 1))
+      }else if(edge_var == "evalue"){
+        net_fig <- net_fig +
+          geom_edges(aes(color = evalue_log), size = 1, alpha = 0.5) +
+          scale_color_gradient(low = "gray95", high = "black",
+                               limits = c(-log(100), -log(0.01)))
+      }else if(edge_var == "cor"){
+        net_fig <- net_fig +
+          geom_edges(aes(color = cor), size = 1, alpha = 0.5, na.rm = TRUE) +
+          scale_color_gradient2(low = "#56B4E9", mid = "gray95", high = "#E69F00",
+                                limits = c(-1, 1))
+      }else if(edge_var == "jaccard"){
+        net_fig <- net_fig +
+          geom_edges(aes(color = jaccard), size = 1, alpha = 0.5, na.rm = TRUE) +
+          scale_color_gradient(low = "white", high = "black",
+                               limits = c(0, 1))
+      }
+      
+    }else{
+      
+      for(v in 1:length(edge_var)){
+        temp_alpha <- net_df %>% filter(!is.na(string_compare)) %>% pull(get(edge_var[v]))
+        temp_alpha[is.na(temp_alpha)] <- 0
+        temp_color <- alpha(colour = edge_colors[edge_var[v]],
+                            alpha = temp_alpha)
+        
+        net_fig <- net_fig +
+          geom_edges(size = 0.5, color = temp_color, curvature = edge_curves[v], na.rm = TRUE)
+      }
+      
+    }
+    
+  }
+  
+  # add nodes: color represents the variable of selection and size represents the frequency in the population
+  if(interactive_plot){
+    net_fig <- net_fig +
+      geom_nodes(aes(fill = get(color_var), text = text, size = get(vertex_size_var)), 
+                 shape = 21, stroke = 0.1)
+  }else{
+    net_fig <- net_fig +
+      geom_nodes(aes(fill = get(color_var), size = get(vertex_size_var)), 
+                 shape = 21, stroke = 0.1)
+  }
+  
+  net_fig <- net_fig +
+    scale_fill_manual(name = color_title, 
+                      values = vertex_color_pal) + 
+    scale_size_continuous(limits = c(0, 1), 
+                          range = c(2, 5))
+  
+  # add ggplot theme elements
   net_fig <- net_fig +
     ggtitle(fig_title) +
     theme_blank() +
@@ -266,7 +320,7 @@ epitope_network_visualization <- function(net_df,
   # net_legend <- cowplot::get_legend(net_fig)
   
   
-  # plotly interactive figure
+  ### Plotly interactive figure
   if(interactive_plot){
     
     if(any_edge){
@@ -532,41 +586,44 @@ ui <- fluidPage(
   fluidRow(
     
     tabsetPanel(type = "tabs",
-                tabPanel("peptide metadata",
+                tabPanel("Table: peptide metadata",
                          dataTableOutput("peptide_info_table")),
                 
-                tabPanel("antibody reactivity",
+                tabPanel("Table: antibody reactivity",
                          dataTableOutput("ab_reactivity_table")),
                 
-                tabPanel("peptide pairwise sequence similarity",
+                tabPanel("Table: peptide pairwise sequence similarity",
                          dataTableOutput("pairwise_seq_sim")),
                 
-                tabPanel("peptide pairwise sequence BLASTP",
+                tabPanel("Table: peptide pairwise sequence BLASTP",
                          dataTableOutput("pairwise_blastp")),
                 
-                tabPanel("peptide pairwise antibody reactivity correlation",
+                tabPanel("Table: peptide pairwise antibody reactivity correlation",
                          dataTableOutput("pairwise_cor")),
                 
-                tabPanel("peptide pairwise jaccard index",
+                tabPanel("Table: peptide pairwise jaccard index",
                          dataTableOutput("pairwise_jaccard")),
                 
-                tabPanel("peptide pairwise calculation",
+                tabPanel("Table: peptide pairwise calculation",
                          dataTableOutput("pairwise_all")),
                 
-                tabPanel("network data",
+                tabPanel("Table: network data",
                          dataTableOutput("network_dt")),
                 
-                tabPanel("sequence similarity", 
+                tabPanel("Network: sequence similarity", 
                          plotlyOutput("plotly_seq", height = "1000px")),
                 
-                tabPanel("sequence BLASTP", 
+                tabPanel("Network: sequence BLASTP", 
                          plotlyOutput("plotly_blastp", height = "1000px")),
                 
-                tabPanel("antibody reactivity correlation",
+                tabPanel("Network: antibody reactivity correlation",
                          plotlyOutput("plotly_cor", height = "1000px")),
                 
-                tabPanel("antibody hit jaccard index",
-                         plotlyOutput("plotly_jaccard", height = "1000px"))
+                tabPanel("Network: antibody hit jaccard index",
+                         plotlyOutput("plotly_jaccard", height = "1000px")),
+                
+                tabPanel("Network: all measures combined",
+                         plotOutput("plot_combined", height = "1000px"))
     )
     
   )
@@ -1176,8 +1233,6 @@ server <- function(input, output, session) {
                                     color_title = "",
                                     color_pal = manualPalette,
                                     edge_var = "sim_score",
-                                    edge_title = "",
-                                    edge_presentation = "color",
                                     vertex_size_var = "frequency",
                                     fig_title = "network of sequence similarity",
                                     interactive_plot = TRUE, 
@@ -1205,8 +1260,6 @@ server <- function(input, output, session) {
                                     color_title = "",
                                     color_pal = manualPalette,
                                     edge_var = "evalue",
-                                    edge_title = "",
-                                    edge_presentation = "color",
                                     vertex_size_var = "frequency",
                                     fig_title = "network of sequence BLASTP E-value",
                                     interactive_plot = TRUE, 
@@ -1234,8 +1287,6 @@ server <- function(input, output, session) {
                                     color_title = "",
                                     color_pal = manualPalette,
                                     edge_var = "jaccard",
-                                    edge_title = "",
-                                    edge_presentation = "color",
                                     vertex_size_var = "frequency",
                                     fig_title = "network of antibody hit jaccard index",
                                     interactive_plot = TRUE, 
@@ -1261,8 +1312,6 @@ server <- function(input, output, session) {
                                     color_title = "",
                                     color_pal = manualPalette,
                                     edge_var = "cor",
-                                    edge_title = "",
-                                    edge_presentation = "color",
                                     vertex_size_var = "frequency",
                                     fig_title = "network of antibody reactivity correlation",
                                     interactive_plot = TRUE, 
@@ -1270,6 +1319,33 @@ server <- function(input, output, session) {
     }else{
       plotly_empty(type = "scatter", mode = "markers")
     }
+  })
+  
+  
+  # visualize the network: all measures combined (static plot)
+  output$plot_combined <- renderPlot({
+    
+    req(network_dt$dt)
+    
+    var_list <- names(peptide_metadata())
+    var_list <- var_list[!(var_list %in% c("u_pep_id"))]
+    
+    if(nrow(network_dt$dt) > 0){
+      
+      epitope_network_visualization(net_df = network_dt$dt,
+                                    color_var = input$color_var,
+                                    color_title = "",
+                                    color_pal = manualPalette,
+                                    edge_var = c("sim_score", "evalue", "cor", "jaccard"),
+                                    vertex_size_var = "frequency",
+                                    fig_title = "sequence similarity: gray, E-value: purple, correlation coefficient: orange-blue, jaccard index: brown",
+                                    interactive_plot = FALSE, 
+                                    var_to_show = var_list)
+      
+    }else{
+      plot.new()
+    }
+    
   })
   
 }
