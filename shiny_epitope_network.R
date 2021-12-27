@@ -21,7 +21,7 @@
 # a) packages -------------------------------------------------------------
 
 # install the packages below if not already installed
-load_lib <- c("shiny", "shinythemes", "shinyWidgets", 
+load_lib <- c("shiny", "shinythemes", "shinyWidgets", "DT", 
               "tidyverse", "here", "devtools", "tools", 
               "rBLAST", "seqinr", 
               "igraph", "ggnetwork", "intergraph", 
@@ -57,6 +57,15 @@ taxa_protein <- VRC_peptide_info %>%
   dplyr::select(starts_with("taxon_"), UniProt_acc) %>% 
   dplyr::distinct()
 
+options(DT.options = list(
+  paging = TRUE,
+  searching = TRUE,
+  fixedColumns = TRUE,
+  autoWidth = TRUE,
+  ordering = TRUE,
+  dom = 'lf<"top"i>tpr<"bottom"B>RSPQ',
+  buttons = c('copy', 'csv', 'excel')
+))
 
 
 # c) function for blastp ----------------------------------------------------------------------
@@ -912,9 +921,23 @@ server <- function(input, output, session) {
     
   })
   
-  output$peptide_info_table <- renderDataTable(data_filtered$pep)
+  # output$peptide_info_table <- renderDataTable(data_filtered$pep)
   
-  output$ab_reactivity_table <- renderDataTable(data_filtered$ab)
+  output$peptide_info_table <- DT::renderDataTable(
+    DT::datatable(data = data_filtered$pep,
+                  extensions = "Buttons",
+                  filter = "top", 
+                  class = "display"
+    )
+  )
+  
+  output$ab_reactivity_table <- DT::renderDataTable(
+    DT::datatable(data = data_filtered$ab,
+                  extensions = "Buttons",
+                  filter = "top", 
+                  class = "display"
+    )
+  )
   
   
   
@@ -1118,30 +1141,46 @@ server <- function(input, output, session) {
   
   
   # show the pairwise calculation results after filtering
-  output$pairwise_seq_sim  <- renderDataTable({
-    req(pairwise_filter)
-    pairwise_filter$seq
-  })
+  output$pairwise_seq_sim <- DT::renderDataTable(
+    DT::datatable(data = pairwise_filter$seq,
+                  extensions = "Buttons",
+                  filter = "top", 
+                  class = "display"
+    )
+  )
   
-  output$pairwise_blastp  <- renderDataTable({
-    req(pairwise_filter)
-    pairwise_filter$blastp
-  })
+  output$pairwise_blastp <-  DT::renderDataTable(
+    DT::datatable(data = pairwise_filter$blastp,
+                  extensions = "Buttons",
+                  filter = "top", 
+                  class = "display"
+    )
+  )
+
   
-  output$pairwise_cor     <- renderDataTable({
-    req(pairwise_filter)
-    pairwise_filter$cor
-  })
+  output$pairwise_cor <- DT::renderDataTable(
+    DT::datatable(data = pairwise_filter$cor,
+                  extensions = "Buttons",
+                  filter = "top", 
+                  class = "display"
+    )
+  )
   
-  output$pairwise_jaccard <- renderDataTable({
-    req(pairwise_filter)
-    pairwise_filter$jac
-  })
+  output$pairwise_jaccard <- DT::renderDataTable(
+    DT::datatable(data = pairwise_filter$jac,
+                  extensions = "Buttons",
+                  filter = "top", 
+                  class = "display"
+    )
+  )
   
-  output$pairwise_all     <- renderDataTable({
-    req(pairwise_filter)
-    pairwise_filter$all
-  })
+  output$pairwise_all <- DT::renderDataTable(
+    DT::datatable(data = pairwise_filter$all,
+                  extensions = "Buttons",
+                  filter = "top", 
+                  class = "display"
+    )
+  )
   
 
   
@@ -1209,11 +1248,14 @@ server <- function(input, output, session) {
   })
   
   
-  output$network_dt  <- renderDataTable({
-    req(network_dt$dt)
-    network_dt$dt 
-  })
-
+  output$network_dt  <- DT::renderDataTable(
+    DT::datatable(data = network_dt$dt,
+                  extensions = "Buttons",
+                  filter = "top", 
+                  class = "display"
+    )
+  )
+  
 
 
   # h) visualization ----------------------------------------------------------------------------
