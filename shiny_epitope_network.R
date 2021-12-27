@@ -585,7 +585,7 @@ ui <- fluidPage(
   
 
   
-  # b) Output panels ----------------------------------------------------------------------------
+  ## b) Output panels ----------------------------------------------------------------------------
   
   htmlOutput(outputId = "n_node"),
   
@@ -596,28 +596,44 @@ ui <- fluidPage(
     
     tabsetPanel(type = "tabs",
                 tabPanel("Table: peptide metadata",
-                         dataTableOutput("peptide_info_table")),
+                         dataTableOutput("peptide_info_table"),
+                         downloadButton(outputId = "peptide_info_download",
+                                        label = "Download all data")),
                 
                 tabPanel("Table: antibody reactivity",
-                         dataTableOutput("ab_reactivity_table")),
+                         dataTableOutput("ab_reactivity_table"),
+                         downloadButton(outputId = "ab_reactivity_download",
+                                        label = "Download all data")),
                 
                 tabPanel("Table: peptide pairwise sequence similarity",
-                         dataTableOutput("pairwise_seq_sim")),
+                         dataTableOutput("pairwise_seq_sim"),
+                         downloadButton(outputId = "pairwise_seq_sim_download",
+                                        label = "Download all data")),
                 
                 tabPanel("Table: peptide pairwise sequence BLASTP",
-                         dataTableOutput("pairwise_blastp")),
+                         dataTableOutput("pairwise_blastp"),
+                         downloadButton(outputId = "pairwise_blastp_download",
+                                        label = "Download all data")),
                 
                 tabPanel("Table: peptide pairwise antibody reactivity correlation",
-                         dataTableOutput("pairwise_cor")),
+                         dataTableOutput("pairwise_cor"),
+                         downloadButton(outputId = "pairwise_cor_download",
+                                        label = "Download all data")),
                 
                 tabPanel("Table: peptide pairwise jaccard index",
-                         dataTableOutput("pairwise_jaccard")),
+                         dataTableOutput("pairwise_jaccard"),
+                         downloadButton(outputId = "pairwise_jaccard_download",
+                                        label = "Download all data")),
                 
                 tabPanel("Table: peptide pairwise calculation",
-                         dataTableOutput("pairwise_all")),
+                         dataTableOutput("pairwise_all"),
+                         downloadButton(outputId = "pairwise_all_download",
+                                        label = "Download all data")),
                 
                 tabPanel("Table: network data",
-                         dataTableOutput("network_dt")),
+                         dataTableOutput("network_dt"),
+                         downloadButton(outputId = "network_dt_download",
+                                        label = "Download all data")),
                 
                 tabPanel("Network: sequence similarity", 
                          plotlyOutput("plotly_seq", height = "1000px")),
@@ -931,12 +947,26 @@ server <- function(input, output, session) {
     )
   )
   
+  output$peptide_info_download <- downloadHandler(
+    filename = "Peptide_metadata.csv",
+    content = function(f){
+      write_csv(x = data_filtered$pep, file = f, col_names = TRUE)
+    }
+  )
+  
   output$ab_reactivity_table <- DT::renderDataTable(
     DT::datatable(data = data_filtered$ab,
                   extensions = "Buttons",
                   filter = "top", 
                   class = "display"
     )
+  )
+  
+  output$ab_reactivity_download <- downloadHandler(
+    filename = "Antibody_reactivity_profile.csv",
+    content = function(f){
+      write_csv(x = data_filtered$ab, file = f, col_names = TRUE)
+    }
   )
   
   
@@ -1149,6 +1179,14 @@ server <- function(input, output, session) {
     )
   )
   
+  output$pairwise_seq_sim_download <- downloadHandler(
+    filename = "Pairwise_sequence_similarity.csv",
+    content = function(f){
+      write_csv(x = pairwise_filter$seq, file = f, col_names = TRUE)
+    }
+  )
+  
+  
   output$pairwise_blastp <-  DT::renderDataTable(
     DT::datatable(data = pairwise_filter$blastp,
                   extensions = "Buttons",
@@ -1156,8 +1194,15 @@ server <- function(input, output, session) {
                   class = "display"
     )
   )
-
   
+  output$pairwise_blastp_download <- downloadHandler(
+    filename = "Pairwise_sequence_BLASTP.csv",
+    content = function(f){
+      write_csv(x = pairwise_filter$blastp, file = f, col_names = TRUE)
+    }
+  )
+  
+
   output$pairwise_cor <- DT::renderDataTable(
     DT::datatable(data = pairwise_filter$cor,
                   extensions = "Buttons",
@@ -1165,6 +1210,14 @@ server <- function(input, output, session) {
                   class = "display"
     )
   )
+  
+  output$pairwise_cor_download <- downloadHandler(
+    filename = "Pairwise_antibody_reactivity_correlation.csv",
+    content = function(f){
+      write_csv(x = pairwise_filter$cor, file = f, col_names = TRUE)
+    }
+  )
+  
   
   output$pairwise_jaccard <- DT::renderDataTable(
     DT::datatable(data = pairwise_filter$jac,
@@ -1174,12 +1227,27 @@ server <- function(input, output, session) {
     )
   )
   
+  output$pairwise_jaccard_download <- downloadHandler(
+    filename = "Pairwise_antibody_reactivity_jaccard_index.csv",
+    content = function(f){
+      write_csv(x = pairwise_filter$jac, file = f, col_names = TRUE)
+    }
+  )
+  
+  
   output$pairwise_all <- DT::renderDataTable(
     DT::datatable(data = pairwise_filter$all,
                   extensions = "Buttons",
                   filter = "top", 
                   class = "display"
     )
+  )
+  
+  output$pairwise_all_download <- downloadHandler(
+    filename = "Pairwise_computation_combined.csv",
+    content = function(f){
+      write_csv(x = pairwise_filter$all, file = f, col_names = TRUE)
+    }
   )
   
 
@@ -1254,6 +1322,13 @@ server <- function(input, output, session) {
                   filter = "top", 
                   class = "display"
     )
+  )
+  
+  output$network_dt_download <- downloadHandler(
+    filename = "Network_configuration_data.csv",
+    content = function(f){
+      write_csv(x = network_dt$dt, file = f, col_names = TRUE)
+    }
   )
   
 
