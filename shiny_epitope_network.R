@@ -33,8 +33,7 @@ for(lib in install_lib) install.packages(lib, dependencies=TRUE)
 if(!("virlink" %in% installed.packages())){
   devtools::install_github(repo = "siyangxia419/virlink", 
                            ref = "main",
-                           upgrade = "never",
-                           auth_token = "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")
+                           upgrade = "never")
 }
 load_lib <- c(load_lib, "virlink")
 
