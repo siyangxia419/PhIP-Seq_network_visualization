@@ -10,5 +10,6 @@
 *.html
 *.tsv
 reference/
-not used/
-in development/
+not_used/
+in_development/
+!VRC_full_data.RData
